@@ -3,7 +3,7 @@ import socket
 # Configuración del servidor
 LOCAL_IP = "127.0.0.1"
 LOCAL_PORT = 20001
-addr = (LOCAL_IP, 20001)
+ADDR = (LOCAL_IP, LOCAL_PORT)
 message = "" # Variable para almacenar el mensaje a enviar
 
 # Bucle para enviar mensajes al servidor
@@ -15,7 +15,7 @@ while message != "end":
         message = input("Enter message to send to server: ")
         bytes_to_send = str.encode(message)
         # Se indica el mensaje y el destinatario
-        client_socket.sendto(bytes_to_send, addr)
+        client_socket.sendto(bytes_to_send, ADDR)
     except KeyboardInterrupt:
         # Salir del bucle si se presiona Ctrl+C
         print("\nClient shutting down gracefully...")

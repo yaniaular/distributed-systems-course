@@ -5,12 +5,13 @@ from datetime import datetime
 LOCAL_IP = "127.0.0.1"
 LOCAL_PORT = 20001
 BUFFER_SIZE = 1024
+ADDR = (LOCAL_IP, LOCAL_PORT)
 
 # Crear el socket UDP, con with garantizamos que la conexión se cierra al finalizar el bloque
 with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp_server_socket:
 
     # Enlazar el socket para escuchar mensajes de los clientes
-    udp_server_socket.bind((LOCAL_IP, LOCAL_PORT))
+    udp_server_socket.bind(ADDR)
     print("\nUDP server up and listening...\n")
 
     # Bucle para escuchar mensajes de los clientes y mostrarlos en consola
