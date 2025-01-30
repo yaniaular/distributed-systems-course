@@ -43,6 +43,8 @@ class ServerTCP:
         """ Inicia el servidor en un proceso aparte. """
         print("Starting servidor ...")
         self.server_thread.start()
+        #print("Joining servidor ...")
+        #self.server_thread.join()
 
     def terminate(self):
         """ Termina el servidor y espera a que el proceso termine. """
@@ -100,10 +102,6 @@ class ServerTCP:
                 print(f"Ocurrió un error: {e}")
                 break
 
-        print("Termina server process...")
-        # Cerrar la conexión
-        #conn.close()
-
 if __name__ == '__main__':
     server = ServerTCP(LOCAL_IP, LOCAL_PORT)
     server.start()
@@ -119,10 +117,9 @@ if __name__ == '__main__':
             continue
         except KeyboardInterrupt:
             # Salir si se presiona Ctrl+C
-            print("\n[KeyboardInterrupt] Programa principal terminado.")
+            print("\n[KeyboardInterrupt] Proceso de verificación de cola de mensajes terminado.")
             server.terminate() # no se porque no se ejecuta esto
             break
 
     if not server.server_thread.is_alive():
-        print("Hilo del servidor terminado correctamente.")
-        
+        print("\nHilo del servidor terminado correctamente.")
