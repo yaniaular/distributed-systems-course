@@ -1,10 +1,16 @@
 import logging
+import sys
 import socket
 import multiprocessing
 import queue
 from typing import Optional
 import tkinter as tk
 from tkinter import messagebox
+from PyQt5.QtCore import QTimer
+from PyQt5.QtWidgets import (
+    QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget, QMessageBox,
+    QLabel, QLineEdit, QTextEdit, QHBoxLayout
+)
 
 # Configuración del servidor
 LOCAL_IP = "127.0.0.1"
@@ -159,194 +165,234 @@ class ClientTCP:
     def close(self):
         self.client_socket.close()
 
-class ChatroomApp:
-    """ Interfaz gráfica para el chatroom. """
+class ChatroomWindows(QMainWindow):
+    def __init__(self, nickname: str):
+        super().__init__()
 
-    def __init__(self, root):
-        self.root = root
-        self.root.title("Chatroom")
-        self.root.geometry("300x200")
-
-        # Botón para entrar al chatroom
-        self.btn_entrar = tk.Button(
-            root,
-            text="Entrar al chatroom",
-            font=("Arial", 14),
-            command=self.abrir_ventana_nickname
-        )
-        self.btn_entrar.pack(pady=20)
-
-        # Botón para revisar información de los usuarios
-        btn_check_users = tk.Button(
-            root,
-            text="Revisar usuarios",
-            font=("Arial", 14),
-            command=self.check_users
-        )
-        btn_check_users.pack(pady=20)
-
-    def check_users(self):
-        for user, config in USERS.items():
-            print(user, config)
-
-    def abrir_ventana_nickname(self):
-        """ Abre una ventana para solicitar el nickname. """
-        self.ventana_nickname = tk.Toplevel(self.root)
-        self.ventana_nickname.title("Nickname")
-        self.ventana_nickname.geometry("300x150")
-
-        # Etiqueta y campo de entrada para el nickname
-        lbl_nickname = tk.Label(
-            self.ventana_nickname, 
-            text="Ingresa tu nickname:",
-            font=("Arial", 12)
-        )
-        lbl_nickname.pack(pady=10)
-
-        self.entry_nickname = tk.Entry(
-            self.ventana_nickname,
-            font=("Arial", 12)
-        )
-        self.entry_nickname.pack(pady=10)
-
-        # Botón para confirmar el nickname
-        btn_confirmar = tk.Button(
-            self.ventana_nickname,
-            text="Confirmar",
-            font=("Arial", 12),
-            command=self.crear_servidor
-        )
-        btn_confirmar.pack(pady=10)
-
-    def crear_servidor(self):
-        """ Crea el servidor TCP con el nickname proporcionado. """
-        nickname = self.entry_nickname.get()
-        if not nickname:
-            messagebox.showerror("Error", "Debes ingresar un nickname.")
-            return
-
-        # Cerrar la ventana de nickname
-        self.ventana_nickname.destroy()
-
-        # Mostrar mensaje de confirmación
-        messagebox.showinfo("Chatroom", f"Bienvenido, {nickname}!")
+        # Guardar el nickname del usuario
+        self.nickname = nickname
 
         # Crear el servidor TCP
-        server = ServerTCP(LOCAL_IP)
-        server.start()
+        self.server = ServerTCP(LOCAL_IP)
+        self.server.start()
+        # Guardar el servidor en el diccionario de usuarios
+        USERS[nickname] = {"server": self.server, "open_chats": {}}
 
-        USERS[nickname] = {"server": server, "chat_abiertos": {}}
+        # Crear la ventana principal
+        self.setWindowTitle(f"Chatroom de {nickname}")
+        self.setGeometry(100, 100, 300, 200)
 
-        # Abrir la ventana de usuarios conectados
-        self.abrir_ventana_usuarios(nickname)
-
-    def abrir_ventana_usuarios(self, nickname):
-        """ Abre una ventana que muestra la lista de usuarios conectados. """
-        self.ventana_usuarios = tk.Toplevel(self.root)
-        self.ventana_usuarios.title(f"Ventana de {nickname}")
-        self.ventana_usuarios.geometry("400x300")
+        # Crear un widget central y un layout vertical
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        layout = QVBoxLayout(central_widget)
 
         # Título de la ventana
-        lbl_titulo = tk.Label(
-            self.ventana_usuarios, 
-            text=f"Hola {nickname}! Usuarios conectados:",
-            font=("Arial", 14)
-        )
-        lbl_titulo.pack(pady=10)
+        lbl_titulo = QLabel(f"Hola {nickname}! Usuarios conectados:", self)
+        lbl_titulo.setFont(self.get_font(14))
+        layout.addWidget(lbl_titulo)
+
+        # Frame para la lista de usuarios
+        self.frame_usuarios = QWidget()
+        self.frame_usuarios.setLayout(QVBoxLayout())
+        layout.addWidget(self.frame_usuarios)
+
+        # Actualizar la lista de usuarios por primera vez
+        self.update_user_list(nickname)
+
+        # Programar la actualización automática cada 2 segundos
+        self.timer = QTimer()
+        self.timer.timeout.connect(lambda: self.update_user_list(nickname))
+        self.timer.start(2000)  # 2000 ms = 2 segundos
+
+    def update_user_list(self, nickname):
+        """ Actualiza la lista de usuarios conectados. """
+        # Limpiar el frame de usuarios
+        for i in reversed(range(self.frame_usuarios.layout().count())):
+            self.frame_usuarios.layout().itemAt(i).widget().setParent(None)
 
         # Mostrar cada usuario con un botón "Abrir conversación"
-        for usuario, config in USERS.items():
-            if usuario == nickname:
+        for destinatario, config in USERS.items():
+            if destinatario == nickname:
                 continue
-            frame_usuario = tk.Frame(self.ventana_usuarios)
-            frame_usuario.pack(pady=5)
 
-            lbl_usuario = tk.Label(
-                frame_usuario, 
-                text=usuario, 
-                font=("Arial", 12)
-            )
-            lbl_usuario.pack(side=tk.LEFT, padx=10)
+            frame_destinatario = QWidget()
+            frame_destinatario.setLayout(QHBoxLayout())
 
-            btn_conversacion = tk.Button(
-                frame_usuario,
-                text="Abrir conversación",
-                font=("Arial", 10),
-                command=lambda n=nickname, u=usuario, c=config.get("server"): self.abrir_conversacion(n,u,c)
-            )
-            btn_conversacion.pack(side=tk.RIGHT)
+            lbl_usuario = QLabel(destinatario, frame_destinatario)
+            lbl_usuario.setFont(self.get_font(12))
+            frame_destinatario.layout().addWidget(lbl_usuario)
 
-    def abrir_conversacion(self, nickname: str, destinatario: str, config: ServerTCP):
+            btn_conversacion = QPushButton("Abrir conversación", frame_destinatario)
+            btn_conversacion.setFont(self.get_font(10))
+            btn_conversacion.clicked.connect(lambda _, n=nickname, u=destinatario, c=config.get("server"): self.open_chat_window(n, u, c))
+            frame_destinatario.layout().addWidget(btn_conversacion)
+
+            self.frame_usuarios.layout().addWidget(frame_destinatario)
+
+    def open_chat_window(self, nickname: str, destinatario: str, destinatario_config: ServerTCP):
         """ Abre una ventana de chat con el usuario seleccionado. """
         # Crear una nueva ventana para el chat
-        ventana_chat = tk.Toplevel(self.root)
-        ventana_chat.title(f"[{nickname}] Chat con {destinatario}")
-        ventana_chat.geometry("400x500")
+        ventana_chat = QMainWindow()
+        ventana_chat.setWindowTitle(f"[{nickname}] Chat con {destinatario}")
+        ventana_chat.setGeometry(100, 100, 400, 500)
 
-        client_socket = ClientTCP(config.ip, config.port)
-        USERS[nickname]["chat_abiertos"] = {destinatario: client_socket}
+        # Validar que no exista un chat abierto con el destinatario
+        if destinatario in USERS[nickname]["open_chats"]:
+            QMessageBox.warning(ventana_chat, "Advertencia", f"Ya tienes un chat abierto con {destinatario}")
+            return
+        # Crear un socket cliente para hablar con el destinatario, es decir
+        # nos conectamos al servidor del destinatario
+        client_socket = ClientTCP(destinatario_config.ip, destinatario_config.port)
+        USERS[nickname]["open_chats"] = {destinatario: [client_socket, ventana_chat]}
+
+        # Widget central y layout
+        central_widget = QWidget()
+        ventana_chat.setCentralWidget(central_widget)
+        layout = QVBoxLayout(central_widget)
 
         # Área de visualización de mensajes
-        frame_mensajes = tk.Frame(ventana_chat)
-        frame_mensajes.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-
-        scrollbar = tk.Scrollbar(frame_mensajes)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-
-        self.texto_mensajes = tk.Text(
-            frame_mensajes, 
-            yscrollcommand=scrollbar.set, 
-            state=tk.DISABLED,  # Deshabilitar edición del área de mensajes
-            font=("Arial", 12)
-        )
-        self.texto_mensajes.pack(fill=tk.BOTH, expand=True)
-
-        scrollbar.config(command=self.texto_mensajes.yview)
+        self.texto_message = QTextEdit(ventana_chat)
+        self.texto_message.setReadOnly(True)  # Deshabilitar edición del área de mensajes
+        self.texto_message.setFont(self.get_font(12))
+        layout.addWidget(self.texto_message)
 
         # Cuadro de texto para escribir mensajes
-        frame_entrada = tk.Frame(ventana_chat)
-        frame_entrada.pack(fill=tk.X, padx=10, pady=10)
+        frame_entrada = QWidget()
+        frame_entrada.setLayout(QHBoxLayout())
 
-        self.entry_mensaje = tk.Entry(
-            frame_entrada, 
-            font=("Arial", 12)
-        )
-        self.entry_mensaje.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
+        self.entry_message = QLineEdit(frame_entrada)
+        self.entry_message.setFont(self.get_font(12))
+        frame_entrada.layout().addWidget(self.entry_message)
 
         # Botón para enviar mensajes
-        btn_enviar = tk.Button(
-            frame_entrada, 
-            text="Enviar", 
-            font=("Arial", 12), 
-            command=lambda: self.enviar_mensaje(destinatario)
-        )
-        btn_enviar.pack(side=tk.RIGHT)
+        btn_enviar = QPushButton("Enviar", frame_entrada)
+        btn_enviar.setFont(self.get_font(12))
+        btn_enviar.clicked.connect(lambda: self.send_message(destinatario))
+        frame_entrada.layout().addWidget(btn_enviar)
 
-        # Asociar la tecla "Enter" al envío de mensajes
-        self.entry_mensaje.bind("<Return>", lambda event: self.enviar_mensaje(destinatario))
+        layout.addWidget(frame_entrada)
 
-    def enviar_mensaje(self, usuario):
+        ventana_chat.show()
+
+    def send_message(self, usuario):
         """ Envía un mensaje y lo muestra en el área de mensajes. """
-        mensaje = self.entry_mensaje.get()
-        if mensaje.strip():  # Verificar que el mensaje no esté vacío
+        message = self.entry_message.text()
+        if message.strip():  # Verificar que el mensaje no esté vacío
             # Mostrar el mensaje en el área de mensajes
-            self.texto_mensajes.config(state=tk.NORMAL)  # Habilitar edición temporalmente
-            self.texto_mensajes.insert(tk.END, f"Tú: {mensaje}\n")
-            self.texto_mensajes.config(state=tk.DISABLED)  # Deshabilitar edición nuevamente
-            self.texto_mensajes.yview(tk.END)  # Desplazar al final del texto
-
-            # Limpiar el cuadro de texto
-            self.entry_mensaje.delete(0, tk.END)
+            self.texto_message.append(f"Tú: {message}")
+            self.entry_message.clear()
 
             # Aquí puedes agregar la lógica para enviar el mensaje al servidor
             # Por ejemplo: self.server.enviar_mensaje(usuario, mensaje)
 
-if __name__ == '__main__':
+    def get_font(self, size):
+        """ Retorna una fuente con el tamaño especificado. """
+        font = self.font()
+        font.setPointSize(size)
+        return font
+        
 
+class NicknameWindow(QMainWindow):
+    """ Ventana secundaria para ingresar el nickname. """
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Ingresar Nickname")
+        self.setGeometry(200, 200, 300, 150)
 
-    root = tk.Tk()
-    app = ChatroomApp(root)
-    root.mainloop()
+        # Widget central y layout principal
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        layout = QVBoxLayout(central_widget)
+
+        # Etiqueta
+        self.label_instruction = QLabel("Ingresa tu nickname:", self)
+        layout.addWidget(self.label_instruction)
+
+        # Campo de texto
+        self.txt_nickname = QLineEdit(self)
+        layout.addWidget(self.txt_nickname)
+
+        # Botón para confirmar
+        self.btn_confirm = QPushButton("Confirmar", self)
+        self.btn_confirm.clicked.connect(self.confirm_nickname)
+        layout.addWidget(self.btn_confirm)
+
+    def confirm_nickname(self):
+        """ Obtiene el texto, muestra un mensaje y cierra la ventana. """
+        nickname = self.txt_nickname.text().strip()
+        if not nickname:
+            QMessageBox.warning(self, "Advertencia", "Por favor, ingresa un nickname.")
+            return
+        
+        if nickname in USERS:
+            QMessageBox.warning(self, "Advertencia", "El nickname ya está en uso.")
+            return
+
+        QMessageBox.information(self, "Información", f"Bienvenido {nickname}")
+        self.close()
+
+        self.chat_room_windows = ChatroomWindows(nickname)
+        self.chat_room_windows.show()
+
+class MainWindow(QMainWindow):
+    """ Ventana principal con dos botones. """
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Ventana Principal")
+        self.setGeometry(100, 100, 300, 200)
+
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        layout = QVBoxLayout(central_widget)
+
+        self.btn_nickname = QPushButton("Conectarte al chatroom", self)
+        self.btn_nickname.clicked.connect(self.ask_nickname_window)
+        layout.addWidget(self.btn_nickname)
+
+        self.btn_list_users = QPushButton("Revisar usuarios", self)
+        self.btn_list_users.clicked.connect(self.list_users)
+        layout.addWidget(self.btn_list_users)
+
+        self.btn_cerrar = QPushButton("Cerrar todo", self)
+        self.btn_cerrar.clicked.connect(self.close_all)
+        layout.addWidget(self.btn_cerrar)
+
+    def close_all(self):
+        """ Cierra todos los servidores, clientes y ventanas. """
+        for user, config in USERS.items():
+            server = config.get("server")
+            for dest_name, values in config.get("open_chats", {}).items():
+                cliente = values[0]
+                cliente.close()
+                del cliente
+                ventana_chat = values[1]
+                ventana_chat.close()
+                del ventana_chat
+            if server:
+                server.terminate()
+                del server
+        USERS.clear()
+        self.close()
+
+    def ask_nickname_window(self):
+        """ Crea y muestra la ventana para ingresar nickname. """
+        self.nickname_window = NicknameWindow()
+        self.nickname_window.show()
+
+    def list_users(self):
+        """ Muestra la información de los usuarios. """
+        for user, config in USERS.items():
+            print(user, config)
+
+def main():
+    app = QApplication(sys.argv)
+    ventana = MainWindow()
+    ventana.show()
+    sys.exit(app.exec_())
+
+if __name__ == "__main__":
+    main()
 
     """
     server = ServerTCP(LOCAL_IP, LOCAL_PORT)
