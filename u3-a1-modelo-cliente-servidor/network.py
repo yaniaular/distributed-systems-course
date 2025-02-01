@@ -14,6 +14,8 @@ from PyQt5.QtWidgets import (
 # Diccionario para almacenar los usuarios conectados
 USERS = {}
 USERS_CHATROOMS = {}
+CHAT_MESSAGES = {}
+USERS_CHATROOMS_BY_ADDR = {}
 
 # Configuración del servidor
 LOCAL_IP = "127.0.0.1"
@@ -131,7 +133,7 @@ class ServerTCP:
                     #print(f"Mensaje recibido de {addr}: {msg}")
                     # Colocamos el mensaje en la cola con un tag 
                     # para identificar quién lo envió.
-                    incoming_queue.put((0, msg, addr))
+                    incoming_queue.put((msg, addr))
                     print(f"Mensaje recibido de {addr}: {msg}")
 
                 data = "ACK"
@@ -281,9 +283,6 @@ class ChatroomWindows(QMainWindow):
         layout.addWidget(frame_entrada)
         self.ventana_chat.show()
 
-        # Guardar la ventana de chat en el diccionario
-        self.chat_windows[recipient_nickname] = self.texto_message
-
     def send_message(self, recipient_nickname: str):
         """ Envía un mensaje y lo muestra en el área de mensajes. """
         message = self.entry_message.text()
@@ -296,6 +295,7 @@ class ChatroomWindows(QMainWindow):
             sender_user_info = USERS[self.sender_nickname] #yani
             recipient_user_info = USERS[recipient_nickname] #paco
 
+            chatroom_recipient = None
             if self.sender_nickname not in recipient_user_info.tcp_servers: # si el recipient no tiene un servidor para recibir mensajes del sender, hay que crearlo
                 server = ServerTCP(f"server_of_{recipient_nickname}_to_receive_messages_from_{self.sender_nickname}", LOCAL_IP)
                 server.start()
@@ -303,22 +303,32 @@ class ChatroomWindows(QMainWindow):
                 time.sleep(1)
                 chatroom_recipient = USERS_CHATROOMS[recipient_nickname]
                 chatroom_recipient.open_chat(recipient_nickname=self.sender_nickname,sender_nickname=recipient_nickname)
+                self.a1 = CheckIncomingMessages(server, chatroom_recipient)
 
             if recipient_nickname not in sender_user_info.tcp_servers: # si el sender no tiene un servidor para recibir mensajes del recipient, hay que crearlo
                 server = ServerTCP(f"server_of_{self.sender_nickname}_to_receive_messages_from_{recipient_nickname}", LOCAL_IP)
                 server.start()
                 sender_user_info.tcp_servers[recipient_nickname] = server
                 time.sleep(1)
+                self.a2 = CheckIncomingMessages(server, self)
+
             if recipient_nickname not in sender_user_info.tcp_clients: # si el sender no tiene creado un cliente para escribirle al recipient, hay que crearlo
                 recipient_user_server_for_sender = recipient_user_info.tcp_servers[self.sender_nickname]
                 client_socket = ClientTCP(f"client_of_{self.sender_nickname}_to_send_messages_to_{recipient_nickname}", recipient_user_server_for_sender.ip, recipient_user_server_for_sender.port)
                 sender_user_info.tcp_clients[recipient_nickname] = client_socket
+                if chatroom_recipient is not None:
+                    USERS_CHATROOMS_BY_ADDR[client_socket.client_socket.getsockname()] = chatroom_recipient
+
+                # Guardar el texto_message de chat en el diccionario
+                #CHAT_MESSAGES[client_socket.address] = self.texto_message  # TODO: el self.texto_message debe ser por cada cliente y aqui se esta usando la misma variable texto_message
 
             if self.sender_nickname not in recipient_user_info.tcp_clients: # si el recipient no tiene creado un cliente para escribirle al sender, hay que crearlo
                 sender_user_server_for_recipient = sender_user_info.tcp_servers[recipient_nickname]
                 client_socket = ClientTCP(f"client_of_{recipient_nickname}_to_send_messages_to_{self.sender_nickname}", sender_user_server_for_recipient.ip, sender_user_server_for_recipient.port)
                 recipient_user_info.tcp_clients[self.sender_nickname] = client_socket
 
+                USERS_CHATROOMS_BY_ADDR[client_socket.client_socket.getsockname()] = self
+                    #CHAT_MESSAGES[client_socket.address] = chatroom_recipient.texto_message
 
             client_socket = sender_user_info.tcp_clients[recipient_nickname]
             data = client_socket.send_message(message)
@@ -331,6 +341,33 @@ class ChatroomWindows(QMainWindow):
         font.setPointSize(size)
         return font
 
+class CheckIncomingMessages:
+    def __init__(self, server: ServerTCP, chatroom: ChatroomWindows):
+        self.server = server
+        self.chatroom = chatroom
+        
+        # Configurar un QTimer para verificar la cola de mensajes periódicamente
+        self.timer = QTimer(self.chatroom)
+        self.timer.timeout.connect(self.check_incoming_messages)
+        self.timer.start(100)  # Verificar cada 100 ms
+
+    def check_incoming_messages(self):
+        try:
+            # Intentar obtener un mensaje de la cola
+            mensaje, address = self.server.incoming_queue.get_nowait()
+            print(f"{address}: {mensaje}")
+            print(USERS_CHATROOMS_BY_ADDR)
+            
+            # Obtener la ventana de chat correspondiente al address
+            chat_window = USERS_CHATROOMS_BY_ADDR.get(address)
+            if chat_window:
+                # Agregar el mensaje al QTextEdit correspondiente
+                chat_window.texto_message.append(f"{address}: {mensaje}")
+        except queue.Empty:
+            # Si no hay mensajes en la cola, continuar
+            pass
+        except Exception as e:
+            logger.error(f"Error al procesar mensaje: {e}")
 
 class NicknameWindow(QMainWindow):
     """ Ventana secundaria para ingresar el nickname. """
