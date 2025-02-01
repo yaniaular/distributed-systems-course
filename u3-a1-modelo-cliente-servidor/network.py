@@ -1,6 +1,7 @@
 import logging
 import sys
 import socket
+import time
 import multiprocessing
 import queue
 from typing import Optional, Dict, Tuple
@@ -40,13 +41,16 @@ class ServerTCP:
         maximum_connections (int): Número máximo de conexiones de clientes simultáneas.
     """
 
-    def __init__(self, 
+    def __init__(self,
+                 name: str,
                  ip: str, 
                  buffer_size: Optional[int] = 1024,
                  maximum_connections: Optional[int] = 3):
         logger.info("Configurando servidor...")
+        self.name = name
         self.ip = ip
         self.port = self.get_free_port()
+        print(f"[{self.name}]: Usando IP: {self.ip} - Usando puerto: {self.port}")
         self.incoming_queue = multiprocessing.Queue()
         self.address = (ip, self.port)
         self.buffer_size = buffer_size
@@ -126,11 +130,10 @@ class ServerTCP:
                     #print(f"Mensaje recibido de {addr}: {msg}")
                     # Colocamos el mensaje en la cola con un tag 
                     # para identificar quién lo envió.
-                    incoming_queue.put((addr, msg))
+                    incoming_queue.put((0, msg, addr))
 
                 data = "ACK"
                 conn.send(data.encode())
-                print("Servidor (Tú):")
                 logger.info("Enviando ACK al cliente...")
         except KeyboardInterrupt:
             # Terminar hilo si se presiona Ctrl+C
@@ -148,7 +151,8 @@ class ClientTCP:
         client_socket (socket.socket): Socket del cliente.
     """
 
-    def __init__(self, ip: str, port: int, buffer_size: Optional[int] = 1024):
+    def __init__(self, name: str, ip: str, port: int, buffer_size: Optional[int] = 1024):
+        self.name = name
         self.address = (ip, port)
         self.buffer_size = buffer_size
         self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -226,7 +230,7 @@ class ChatroomWindows(QMainWindow):
             sender_nickname = self.sender_nickname
 
         self.create_window_chat(recipient_nickname, sender_nickname)
-        #recipient_chat = self.create_window_chat(recipient_nickname, sender_nickname)
+        #self.create_window_chat(sender_nickname, recipient_nickname)
 
         #sender_chat.show()
         #recipient_chat.show()
@@ -282,12 +286,34 @@ class ChatroomWindows(QMainWindow):
             self.texto_message.append(f"Tú: {message}")
             self.entry_message.clear()
 
-            #client_socket = USERS[self.sender_nickname].tcp_clients[recipient_nickname]
-            #data = client_socket.send_message(message)
-            #print('Servidor: ' + data)
+            sender_user_info = USERS[self.sender_nickname] #yani
+            recipient_user_info = USERS[recipient_nickname] #paco
 
-            # Aquí puedes agregar la lógica para enviar el mensaje al servidor
-            # Por ejemplo: self.server.enviar_mensaje(usuario, mensaje)
+            if self.sender_nickname not in recipient_user_info.tcp_servers: # si el recipient no tiene un servidor para recibir mensajes del sender, hay que crearlo
+                server = ServerTCP(f"server_of_{recipient_nickname}_to_receive_messages_from_{self.sender_nickname}", LOCAL_IP)
+                server.start()
+                recipient_user_info.tcp_servers[self.sender_nickname] = server
+
+            if recipient_nickname not in sender_user_info.tcp_servers: # si el sender no tiene un servidor para recibir mensajes del recipient, hay que crearlo
+                server = ServerTCP(f"server_of_{self.sender_nickname}_to_receive_messages_from_{recipient_nickname}", LOCAL_IP)
+                server.start()
+                sender_user_info.tcp_servers[recipient_nickname] = server
+            time.sleep(2)
+            if recipient_nickname not in sender_user_info.tcp_clients: # si el sender no tiene creado un cliente para escribirle al recipient, hay que crearlo
+                recipient_user_server_for_sender = recipient_user_info.tcp_servers[self.sender_nickname]
+                client_socket = ClientTCP(f"client_of_{self.sender_nickname}_to_send_messages_to_{recipient_nickname}", recipient_user_server_for_sender.ip, recipient_user_server_for_sender.port)
+                sender_user_info.tcp_clients[recipient_nickname] = client_socket
+
+            if self.sender_nickname not in recipient_user_info.tcp_clients: # si el recipient no tiene creado un cliente para escribirle al sender, hay que crearlo
+                sender_user_server_for_recipient = sender_user_info.tcp_servers[recipient_nickname]
+                client_socket = ClientTCP(f"client_of_{recipient_nickname}_to_send_messages_to_{self.sender_nickname}", sender_user_server_for_recipient.ip, sender_user_server_for_recipient.port)
+                recipient_user_info.tcp_clients[self.sender_nickname] = client_socket
+
+
+            client_socket = sender_user_info.tcp_clients[recipient_nickname]
+            data = client_socket.send_message(message)
+            print('Servidor: ' + data)
+
 
     def get_font(self, size):
         """ Retorna una fuente con el tamaño especificado. """
@@ -335,6 +361,7 @@ class NicknameWindow(QMainWindow):
         QMessageBox.information(self, "Información", f"Bienvenido {nickname}")
         self.close()
 
+        # esto tenia self.chat_room_windows, y cuando le quite el self no funcionó
         chat_room_windows = ChatroomWindows(nickname)
         chat_room_windows.show()
 
@@ -397,6 +424,7 @@ class UserInfo:
         self.nickname = nickname
         self.chatroom_window = chatroom_window
         self.tcp_clients = {}
+        self.tcp_servers = {}
 
 def main():
     app = QApplication(sys.argv)
