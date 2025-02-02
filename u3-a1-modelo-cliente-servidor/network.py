@@ -174,9 +174,9 @@ class ClientTCP:
 class ChatroomWindows(QMainWindow):
     def __init__(self, nickname: str):
         super().__init__()
-        self.ventana_chat = None
         self.chat_windows = {} # Diccionario para almacenar las ventanas de chat que tiene abiertas el sender
-        # Guardar el nickname del usuario
+        self.text_box = {} # Diccionario para almacenar los QTextEdit de cada chat
+        self.entry_message = {} # Diccionario para almacenar los QLineEdit de cada chat
         self.sender_nickname = nickname
         USERS[self.sender_nickname] = UserInfo(nickname, self)
 
@@ -236,43 +236,34 @@ class ChatroomWindows(QMainWindow):
             sender_nickname = self.sender_nickname
 
         self.create_window_chat(recipient_nickname, sender_nickname)
-        #self.create_window_chat(sender_nickname, recipient_nickname)
-
-        #sender_chat.show()
-        #recipient_chat.show()
 
     def create_window_chat(self, recipient_nickname: str, sender_nickname: Optional[str] = None):
         if sender_nickname is None:
             sender_nickname = self.sender_nickname
 
         # Crear una nueva ventana para el chat
-        self.ventana_chat = QMainWindow()
-        self.ventana_chat.setWindowTitle(f"[{sender_nickname}] Chat con {recipient_nickname}")
-        self.ventana_chat.setGeometry(100, 100, 400, 500)
+        self.chat_windows[recipient_nickname] = QMainWindow()
+        self.chat_windows[recipient_nickname].setWindowTitle(f"[{sender_nickname}] Chat con {recipient_nickname}")
+        self.chat_windows[recipient_nickname].setGeometry(100, 100, 400, 500)
 
-        # Validar que no exista un chat abierto con el recipient
-        #if sender_nickname in USERS[recipient_nickname].open_chats:
-        #    QMessageBox.warning(ventana_chat, "Advertencia", f"Ya tienes un chat abierto con {recipient_nickname}")
-        #    return
-
-        # Widget central y layout
         central_widget = QWidget()
-        self.ventana_chat.setCentralWidget(central_widget)
+        self.chat_windows[recipient_nickname].setCentralWidget(central_widget)
         layout = QVBoxLayout(central_widget)
 
         # Área de visualización de mensajes
-        self.texto_message = QTextEdit(self.ventana_chat)
-        self.texto_message.setReadOnly(True)  # Deshabilitar edición del área de mensajes
-        self.texto_message.setFont(self.get_font(12))
-        layout.addWidget(self.texto_message)
+        self.text_box[recipient_nickname] = QTextEdit(self.chat_windows[recipient_nickname])
+        self.text_box[recipient_nickname].setReadOnly(True)
+        self.text_box[recipient_nickname].setFont(self.get_font(12))
+        layout.addWidget(self.text_box[recipient_nickname])
 
         # Cuadro de texto para escribir mensajes
         frame_entrada = QWidget()
         frame_entrada.setLayout(QHBoxLayout())
 
-        self.entry_message = QLineEdit(frame_entrada)
-        self.entry_message.setFont(self.get_font(12))
-        frame_entrada.layout().addWidget(self.entry_message)
+
+        self.entry_message[recipient_nickname] = QLineEdit(frame_entrada)
+        self.entry_message[recipient_nickname].setFont(self.get_font(12))
+        frame_entrada.layout().addWidget(self.entry_message[recipient_nickname])
 
         # Botón para enviar mensajes
         btn_enviar = QPushButton("Enviar", frame_entrada)
@@ -281,16 +272,16 @@ class ChatroomWindows(QMainWindow):
         frame_entrada.layout().addWidget(btn_enviar)
 
         layout.addWidget(frame_entrada)
-        self.ventana_chat.show()
+        self.chat_windows[recipient_nickname].show()
 
     def send_message(self, recipient_nickname: str):
         """ Envía un mensaje y lo muestra en el área de mensajes. """
-        message = self.entry_message.text()
+        message = self.entry_message[recipient_nickname].text()
         if message.strip():  # Verificar que el mensaje no esté vacío
 
             # Mostrar el mensaje en el área de mensajes
-            self.texto_message.append(f"Tú: {message}")
-            self.entry_message.clear()
+            self.text_box[recipient_nickname].append(f"Tú: {message}")
+            self.entry_message[recipient_nickname].clear()
 
             sender_user_info = USERS[self.sender_nickname] #yani
             recipient_user_info = USERS[recipient_nickname] #paco
@@ -316,8 +307,7 @@ class ChatroomWindows(QMainWindow):
                 recipient_user_server_for_sender = recipient_user_info.tcp_servers[self.sender_nickname]
                 client_socket = ClientTCP(f"client_of_{self.sender_nickname}_to_send_messages_to_{recipient_nickname}", recipient_user_server_for_sender.ip, recipient_user_server_for_sender.port)
                 sender_user_info.tcp_clients[recipient_nickname] = client_socket
-                if chatroom_recipient is not None:
-                    USERS_CHATROOMS_BY_ADDR[client_socket.client_socket.getsockname()] = chatroom_recipient
+                USERS_CHATROOMS_BY_ADDR[client_socket.client_socket.getsockname()] = self
 
                 # Guardar el texto_message de chat en el diccionario
                 #CHAT_MESSAGES[client_socket.address] = self.texto_message  # TODO: el self.texto_message debe ser por cada cliente y aqui se esta usando la misma variable texto_message
@@ -327,7 +317,9 @@ class ChatroomWindows(QMainWindow):
                 client_socket = ClientTCP(f"client_of_{recipient_nickname}_to_send_messages_to_{self.sender_nickname}", sender_user_server_for_recipient.ip, sender_user_server_for_recipient.port)
                 recipient_user_info.tcp_clients[self.sender_nickname] = client_socket
 
-                USERS_CHATROOMS_BY_ADDR[client_socket.client_socket.getsockname()] = self
+                if chatroom_recipient is not None:
+                    USERS_CHATROOMS_BY_ADDR[client_socket.client_socket.getsockname()] = chatroom_recipient
+
                     #CHAT_MESSAGES[client_socket.address] = chatroom_recipient.texto_message
 
             client_socket = sender_user_info.tcp_clients[recipient_nickname]
@@ -360,9 +352,17 @@ class CheckIncomingMessages:
             
             # Obtener la ventana de chat correspondiente al address
             chat_window = USERS_CHATROOMS_BY_ADDR.get(address)
+            # Obtener el nickname del address
+            sender_nickname = chat_window.sender_nickname
+
+            print(f"sender_nickname {sender_nickname}")
+            print(f"recipient_nickname {self.chatroom.sender_nickname}")
+
+            print(f"self.chatroom.text_box {self.chatroom.text_box}")
             if chat_window:
                 # Agregar el mensaje al QTextEdit correspondiente
-                chat_window.texto_message.append(f"{address}: {mensaje}")
+                self.chatroom.text_box[sender_nickname].append(f"{address}: {mensaje}")
+                #chat_window.texto_message.append(f"{address}: {mensaje}")
         except queue.Empty:
             # Si no hay mensajes en la cola, continuar
             pass
@@ -409,9 +409,9 @@ class NicknameWindow(QMainWindow):
         self.close()
 
         # esto tenia self.chat_room_windows, y cuando le quite el self no funcionó
-        self.chat_room_windows = ChatroomWindows(nickname)
-        self.chat_room_windows.show()
-        USERS_CHATROOMS[nickname] = self.chat_room_windows
+        self.chatroom_windows = ChatroomWindows(nickname)
+        self.chatroom_windows.show()
+        USERS_CHATROOMS[nickname] = self.chatroom_windows
 
 class MainWindow(QMainWindow):
     """ Ventana principal con dos botones. """
@@ -438,20 +438,14 @@ class MainWindow(QMainWindow):
 
     def close_all(self):
         """ Cierra todos los servidores, clientes y ventanas. """
+        for nickname, user_info in USERS_CHATROOMS.items():
+            for dest_name, config_values in user_info.tcp_clients.items():
+                config_values.close()
+        for nickname, user_info in USERS_CHATROOMS.items():
+            for dest_name, config_values in user_info.tcp_servers.items():
+                config_values.terminate()
         for nickname, user_info in USERS.items():
-            #server = user_info.tcp_server
-            chatroom_window = user_info.chatroom_window
-            for dest_name, config_values in user_info.open_chats.items():
-                cliente = config_values[0] # client_socket
-                cliente.close()
-                del cliente
-                chat_window = config_values[1] # chat_window
-                chat_window.close()
-                del chat_window
-            #if server.server_thread.is_alive():
-            #    server.terminate()
-            #    del server
-            chatroom_window.close()
+            user_info.chatroom_window.close()
         self.close()
 
     def ask_nickname_window(self):
