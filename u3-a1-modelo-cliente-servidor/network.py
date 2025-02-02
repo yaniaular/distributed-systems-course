@@ -12,9 +12,8 @@ from PyQt5.QtWidgets import (
 )
 
 # Diccionario para almacenar los usuarios conectados
-USERS = {}
-USERS_CHATROOMS = {}
-CHAT_MESSAGES = {}
+USER_INFO_BY_NICKNAME = {}
+USERS_CHATROOMS_BY_NICKNAME = {}
 USERS_CHATROOMS_BY_ADDR = {}
 
 # Configuración del servidor
@@ -127,7 +126,7 @@ class ServerTCP:
                     # Colocar el mensaje en la cola de mensajes entrantes
                     # para poder acceder a él desde otro proceso
                     incoming_queue.put((msg, addr))
-                    logger.info(f"Mensaje recibido de {addr}: {msg}")
+                    logger.info("Mensaje recibido de %s: %s", str(addr), str(msg))
 
                 data = "ACK"
                 conn.send(data.encode())
@@ -166,7 +165,7 @@ class ChatroomWindows(QMainWindow):
     def __init__(self, nickname: str):
         super().__init__()
         self.sender_nickname = nickname
-        USERS[self.sender_nickname] = UserInfo(nickname, self)
+        USER_INFO_BY_NICKNAME[self.sender_nickname] = UserInfo(nickname, self)
 
         self.chat_windows = {} # Diccionario para almacenar las ventanas de chat que tiene abiertas el sender
         self.text_box = {} # Diccionario para almacenar los QTextEdit de cada chat
@@ -178,6 +177,10 @@ class ChatroomWindows(QMainWindow):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         layout = QVBoxLayout(central_widget)
+
+        #self.btn_nickname = QPushButton("Abrir grupo de conversacion", self)
+        #self.btn_nickname.clicked.connect(self.ask_nickname_window)
+        #layout.addWidget(self.btn_nickname)
 
         lbl_titulo = QLabel(f"Hola {self.sender_nickname}! Usuarios conectados:", self)
         lbl_titulo.setFont(self.get_font(14))
@@ -198,7 +201,7 @@ class ChatroomWindows(QMainWindow):
         for i in reversed(range(self.frame_usuarios.layout().count())):
             self.frame_usuarios.layout().itemAt(i).widget().setParent(None)
 
-        for recipient_nickname in USERS.keys():
+        for recipient_nickname in USER_INFO_BY_NICKNAME.keys():
             if self.sender_nickname == recipient_nickname:
                 continue
 
@@ -269,8 +272,8 @@ class ChatroomWindows(QMainWindow):
             self.text_box[recipient_nickname].append(f"Tú: {message}")
             self.entry_message[recipient_nickname].clear()
 
-            sender_user_info = USERS[self.sender_nickname] #yani
-            recipient_user_info = USERS[recipient_nickname] #paco
+            sender_user_info = USER_INFO_BY_NICKNAME[self.sender_nickname] #yani
+            recipient_user_info = USER_INFO_BY_NICKNAME[recipient_nickname] #paco
 
             chatroom_recipient = None
             if self.sender_nickname not in recipient_user_info.tcp_servers: # si el recipient no tiene un servidor para recibir mensajes del sender, hay que crearlo
@@ -278,7 +281,7 @@ class ChatroomWindows(QMainWindow):
                 server.start()
                 recipient_user_info.tcp_servers[self.sender_nickname] = server
                 time.sleep(1)
-                chatroom_recipient = USERS_CHATROOMS[recipient_nickname]
+                chatroom_recipient = USERS_CHATROOMS_BY_NICKNAME[recipient_nickname]
                 chatroom_recipient.open_chat(recipient_nickname=self.sender_nickname,sender_nickname=recipient_nickname)
                 recipient_user_info.check_incoming_messages_from[self.sender_nickname] = CheckIncomingMessages(server, chatroom_recipient)
 
@@ -374,7 +377,7 @@ class NicknameWindow(QMainWindow):
             QMessageBox.warning(self, "Advertencia", "Por favor, ingresa un nickname.")
             return
 
-        if nickname in USERS:
+        if nickname in USER_INFO_BY_NICKNAME:
             QMessageBox.warning(self, "Advertencia", "El nickname ya está en uso.")
             return
 
@@ -383,7 +386,7 @@ class NicknameWindow(QMainWindow):
 
         self.chatroom_windows = ChatroomWindows(nickname)
         self.chatroom_windows.show()
-        USERS_CHATROOMS[nickname] = self.chatroom_windows
+        USERS_CHATROOMS_BY_NICKNAME[nickname] = self.chatroom_windows
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -409,14 +412,14 @@ class MainWindow(QMainWindow):
 
     def close_all(self):
         """ Cierra todos los servidores, clientes y ventanas. """
-        for nickname, user_info in USERS_CHATROOMS.items():
-            for dest_name, config_values in user_info.tcp_clients.items():
+        for nickname, chatroom in USERS_CHATROOMS_BY_NICKNAME.items():
+            for dest_name, config_values in chatroom.tcp_clients.items():
                 config_values.close()
-        for nickname, user_info in USERS_CHATROOMS.items():
-            for dest_name, config_values in user_info.tcp_servers.items():
+        for nickname, chatroom in USERS_CHATROOMS_BY_NICKNAME.items():
+            for dest_name, config_values in chatroom.tcp_servers.items():
                 config_values.terminate()
-        for nickname, user_info in USERS.items():
-            user_info.chatroom_window.close()
+        for nickname, chatroom in USERS_CHATROOMS_BY_NICKNAME.items():
+            chatroom.close()
         self.close()
 
     def ask_nickname_window(self):
@@ -424,10 +427,9 @@ class MainWindow(QMainWindow):
         self.nickname_window.show()
 
     def list_users(self):
-        print(USERS)
-        for nickname, user_info in USERS.items():
+        for nickname, user_info in USER_INFO_BY_NICKNAME.items():
             print(nickname, user_info)
-        for nickname, chatroom_window in USERS_CHATROOMS.items():
+        for nickname, chatroom_window in USERS_CHATROOMS_BY_NICKNAME.items():
             print(nickname, chatroom_window)
 
 class UserInfo:
