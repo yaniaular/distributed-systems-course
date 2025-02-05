@@ -70,7 +70,8 @@ class TicTacToeWindow(QtWidgets.QMainWindow):
     """
     def __init__(self, is_player_one, peer_ip, local_port):
         super().__init__()
-        self.setWindowTitle("Juego del Gato P2P")
+        self.my_symbol = 'X' if is_player_one else 'O'
+        self.setWindowTitle(f"[Player {self.my_symbol}] Juego del Gato P2P")
         self.setFixedSize(300, 350)
 
         # Lógica del juego
@@ -78,7 +79,6 @@ class TicTacToeWindow(QtWidgets.QMainWindow):
 
         # Identificador de si somos el jugador 1 o 2
         self.is_player_one = is_player_one  
-        self.my_symbol = 'X' if is_player_one else 'O'
 
         # Configurar la interfaz
         self.central_widget = QtWidgets.QWidget()
@@ -189,6 +189,7 @@ class TicTacToeWindow(QtWidgets.QMainWindow):
             self.socket.bind((self.peer_ip, self.local_port))
             self.socket.listen(1)
             self.status_label.setText(f"Esperando conexión en puerto {self.local_port}...")
+            time.sleep(1)
         except Exception as e:
             self.status_label.setText(f"Error iniciando servidor: {e}")
             return
@@ -201,7 +202,7 @@ class TicTacToeWindow(QtWidgets.QMainWindow):
         Acepta la conexión entrante y maneja los mensajes.
         """
         self.conn, addr = self.socket.accept()
-        self.status_label.setText(f"Conectado con {addr}")
+        self.status_label.setText(f"Conectado con {addr}\n Turno de X")
         # Escuchar mensajes
         self.listen_thread = threading.Thread(target=self.listen_messages, daemon=True)
         self.listen_thread.start()
