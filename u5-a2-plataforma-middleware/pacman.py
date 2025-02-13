@@ -154,6 +154,9 @@ class PacmanNode:
     def update_score(self, score):
         self.node.send(f"{self.player_uuid}:SCORE:{self.player_name}:{score}")
 
+    def send_win_message(self):
+        self.node.send(f"{self.player_uuid}:WIN:{self.player_name}")
+
 # --------------------------------------------------------------
 #            Lógica para la interfaz gráfica del juego
 # --------------------------------------------------------------
@@ -253,6 +256,7 @@ class PacmanGame:
 
         self.setup_walls_and_blocks()
         self.player = None
+        self.game_over = False
 
     def setup_walls_and_blocks(self):
         walls_info = [ [0,0,6,600],
@@ -348,6 +352,19 @@ class PacmanGame:
             self.block_list.remove(to_remove)
             self.all_sprites_list.remove(to_remove)
 
+    def check_win_condition(self):
+        if len(self.block_list) < 200:
+            self.game_over = True
+            return True
+        return False
+
+    def get_winner(self):
+        if not self.score_dict:
+            return None
+        winner_uuid = max(self.score_dict, key=lambda uuid: self.score_dict[uuid][1])
+        winner_name, winner_score = self.score_dict[winner_uuid]
+        return winner_name, winner_score
+
     def draw(self):
         self.screen.fill(BLACK)
         self.all_sprites_list.draw(self.screen)
@@ -361,11 +378,29 @@ class PacmanGame:
             self.screen.blit(text, (10, y_offset))
             y_offset += 24
 
+        if self.game_over:
+            print(f"Score final: {self.score_dict}")
+            winner_name = self.get_winner()  # Obtener el nombre del primer jugador
+            print(f"{winner_name[0]} ha ganado!")
+            message = f"¡{winner_name[0]} ha ganado!"
+            self.screen.blit(self.font.render(message, True, RED), (200, 300))
+            pygame.display.flip()
+            waiting = True
+            while waiting:
+                for event in pygame.event.get():
+                    if event.type == pygame.QUIT:
+                        pygame.quit()
+                        sys.exit()
+                    if event.type == pygame.KEYDOWN or event.type == pygame.MOUSEBUTTONDOWN:
+                        waiting = False
+
         pygame.display.flip()
 
     def handle_local_input(self, node_player: PacmanNode):
+        if self.game_over:
+            return True
+
         local_id = node_player.player_uuid
-        
         local_player = self.player_dict.get(local_id)
         
         if not local_player:
@@ -410,7 +445,8 @@ class PacmanGame:
             node_player.update_score(self.score_dict[local_id][1])
             for block in eaten_blocks:
                 node_player.eat_block(block.rect.x, block.rect.y, block.block_id)
-
+                if self.check_win_condition():
+                    node_player.send_win_message()
         return True
 
     def stop(self):
@@ -429,13 +465,16 @@ def process_incoming_messages(game: PacmanGame, node_player: PacmanNode, player_
         (18, 0, "images/pacman3.png"),
         (0,0, "images/pacman4.png")
     ]
-
     while True:
         try:
             msg, addr = node_player.node.incoming_messages_queue.get()
             player_uuid_received = msg.split(":")[0]
             message = msg.split(":")[1:]
             action = message[0]
+
+            if action == "WIN" and player_uuid_received != player_uuid:
+                player_name = message[1]
+                game.game_over = True
 
             if action == "JOIN":
                 player_name = message[1]
@@ -549,7 +588,6 @@ def main():
             running = game.handle_local_input(node_player=node_player)
         except KeyboardInterrupt:
             break
-
     node_player.node.stop()
     game.stop()
 
