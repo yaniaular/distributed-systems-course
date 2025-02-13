@@ -135,12 +135,12 @@ class PacmanNode:
         # TODO: Revisar que posición inicial no esté ocupada
         self.node.send(f"{self.player_uuid}:RQ_INIT_POSITION:{self.player_name}")
 
-    def join_game(self, pos_init_x, pos_init_y, player_uuid=None, name=None):
+    def join_game(self, pos_init_x, pos_init_y, skin, player_uuid=None, name=None):
         if player_uuid is None:
             player_uuid = self.player_uuid
         if name is None:
             name = self.player_name
-        self.node.send(f"{player_uuid}:JOIN:{name}:{pos_init_x}:{pos_init_y}")
+        self.node.send(f"{player_uuid}:JOIN:{name}:{pos_init_x}:{pos_init_y}:{skin}")
 
     def make_move(self, new_x, new_y):
         self.node.send(f"{self.player_uuid}:MOVE:{self.player_name}:{new_x}:{new_y}")
@@ -148,8 +148,8 @@ class PacmanNode:
     def eat_block(self, x, y, block_id):
         self.node.send(f"{self.player_uuid}:EAT:{self.player_name}:{x}:{y}:{block_id}")
 
-    def send_my_position_to(self, recipient_player_uuid, pos_x, pos_y):
-        self.node.send(f"{self.player_uuid}:LOAD_OTHER_PLAYERS:{recipient_player_uuid}:{self.player_name}:{pos_x}:{pos_y}")
+    def send_my_position_to(self, recipient_player_uuid, pos_x, pos_y, skin):
+        self.node.send(f"{self.player_uuid}:LOAD_OTHER_PLAYERS:{recipient_player_uuid}:{self.player_name}:{pos_x}:{pos_y}:{skin}")
 
     def update_score(self, score):
         self.node.send(f"{self.player_uuid}:SCORE:{self.player_name}:{score}")
@@ -315,18 +315,18 @@ class PacmanGame:
                     self.all_sprites_list.add(block)
                     block_id_counter += 1
 
-    def add_player(self, player_name, player_uuid, x, y):
+    def add_player(self, player_name, player_uuid, x, y, skin):
         if player_uuid not in self.player_dict:
-            self.player = Player(x, y, "images/pacman.png", player_uuid)
+            self.player = Player(x, y, skin, player_uuid)
             self.player_dict[player_uuid] = self.player
             self.all_sprites_list.add(self.player)
             self.score_dict[player_uuid] = [player_name, 0]  # Iniciar score
         else:
             self.player_dict[player_uuid].set_position(x,y)
 
-    def add_external_player(self, player_name, player_uuid, x, y):
+    def add_external_player(self, player_name, player_uuid, x, y, skin):
         if player_uuid not in self.player_dict:
-            player = Player(x, y, "images/pacman.png", player_uuid)
+            player = Player(x, y, skin, player_uuid)
             self.player_dict[player_uuid] = player
             self.all_sprites_list.add(player)
             self.score_dict[player_uuid] = [player_name, 0]  # Iniciar score
@@ -418,15 +418,16 @@ class PacmanGame:
 
 POS_X = None
 POS_Y = None
+SKIN = None
 
 def process_incoming_messages(game: PacmanGame, node_player: PacmanNode, player_uuid, is_master=False):
-    global POS_X, POS_Y
+    global POS_X, POS_Y, SKIN
     position_available = {}
     possibles_init_positions = [
-        #(9, 14),
-        (9, 6),
-        (18, 0),
-        (0,0)
+        #(9, 14, "images/pacman.png"), master
+        (9, 6, "images/pacman2.png"),
+        (18, 0, "images/pacman3.png"),
+        (0,0, "images/pacman4.png")
     ]
 
     while True:
@@ -438,25 +439,25 @@ def process_incoming_messages(game: PacmanGame, node_player: PacmanNode, player_
 
             if action == "JOIN":
                 player_name = message[1]
-                x, y = int(message[2]), int(message[3])
+                x, y, skin = int(message[2]), int(message[3]), message[4]
                 if player_uuid_received == player_uuid:
                     print(f"Te has unido al juego como {player_name}")
-                    POS_X, POS_Y = x, y
+                    POS_X, POS_Y, SKIN = x, y, skin
                 else:
-                    game.add_external_player(player_name, player_uuid_received, x, y)
+                    game.add_external_player(player_name, player_uuid_received, x, y, skin)
                     my_x, my_y = game.player.get_position()
                     print(f"Yo {node_player.player_name} Enviando mi posición a {player_name}, {my_x},{my_y}")
-                    node_player.send_my_position_to(player_uuid_received, my_x, my_y)
+                    node_player.send_my_position_to(player_uuid_received, my_x, my_y, SKIN)
                 continue
 
             if action == "RQ_INIT_POSITION" and is_master:
                 position_available[player_uuid_received] = possibles_init_positions.pop(0)
                 player_name = message[1]
-                x, y = position_available[player_uuid_received]
+                x, y, skin = position_available[player_uuid_received]
                 x = (30*x)+12
                 y = (30*y)+12
                 print(f"Posicion asignada al jugador {player_name} en: ({x},{y})")
-                node_player.join_game(x, y, player_uuid_received, player_name)
+                node_player.join_game(x, y, skin, player_uuid_received, player_name)
                 continue
 
             if action == "LOAD_OTHER_PLAYERS":
@@ -464,8 +465,8 @@ def process_incoming_messages(game: PacmanGame, node_player: PacmanNode, player_
                 if recipient_player_uuid != player_uuid:
                     continue
                 player_name = message[2]
-                pos_x, pos_y = int(message[3]), int(message[4])
-                game.add_external_player(player_name,player_uuid_received, pos_x, pos_y)
+                pos_x, pos_y, skin = int(message[3]), int(message[4]), message[5]
+                game.add_external_player(player_name,player_uuid_received, pos_x, pos_y, skin)
                 continue
 
             if player_uuid_received == player_uuid:
@@ -494,7 +495,7 @@ def process_incoming_messages(game: PacmanGame, node_player: PacmanNode, player_
             print(f"[ERROR] Procesando mensaje: {e}")
 
 def main():
-    global POS_X, POS_Y
+    global POS_X, POS_Y, SKIN
     signal.signal(signal.SIGINT, lambda sig, frame: sys.exit(0))
     signal.signal(signal.SIGTERM, lambda sig, frame: sys.exit(0))
     node_master = False
@@ -529,6 +530,7 @@ def main():
         col = 14 # eje Y
         POS_X = (30*row)+12
         POS_Y = (30*col)+12
+        SKIN = "images/pacman.png"
     else:
         node_player.request_init_position()
 
@@ -538,8 +540,8 @@ def main():
         try:
             if POS_X is None and POS_Y is None:
                 continue
-            if not position_assigned and POS_X is not None and POS_Y is not None:
-                game.add_player(node_player.player_name, node_player.player_uuid, POS_X, POS_Y)
+            if not position_assigned and POS_X is not None and POS_Y is not None and SKIN is not None:
+                game.add_player(node_player.player_name, node_player.player_uuid, POS_X, POS_Y, SKIN)
                 position_assigned = True
             game.draw()
             game.clock.tick(10)
