@@ -15,7 +15,10 @@ start:
 	. venv/bin/activate && python -m pip install --upgrade pip
 	. venv/bin/activate && pip install -r requirements.txt
 
-execute:
+execute-master:
+	. venv/bin/activate && python pacman.py master
+
+execute-slave:
 	. venv/bin/activate && python pacman.py
 
 # Limpieza (elimina la carpeta del entorno virtual en sistemas tipo Unix)

@@ -353,7 +353,7 @@ class PacmanGame:
             self.all_sprites_list.remove(to_remove)
 
     def check_win_condition(self):
-        if len(self.block_list) < 200:
+        if len(self.block_list) == 0:
             self.game_over = True
             return True
         return False
