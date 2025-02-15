@@ -11,7 +11,7 @@ from PyQt5.QtCore import QTimer, Qt
 from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget, QMessageBox,
-    QLabel, QLineEdit, QTextEdit, QHBoxLayout, QListWidget
+    QLabel, QLineEdit, QTextEdit, QHBoxLayout, QListWidget, QListWidgetItem
 )
 
 # Diccionario para almacenar los usuarios conectados
@@ -336,24 +336,24 @@ class ChatroomWindows(QWidget):
         text_title.setStyleSheet("color: white;")
 
         self.btn_create_group = QPushButton("Crear grupo", self)
-        self.btn_create_group.clicked.connect(lambda: self.create_window_chat("difusion"))
+        self.btn_create_group.setFixedSize(150, 40)
+        self.btn_create_group.clicked.connect(self.create_window_group)
 
+        # Crear el placeholder como un QListWidgetItem
+        placeholder_item = QListWidgetItem("No hay nadie conectado...")
+        placeholder_item.setFlags(placeholder_item.flags() & ~Qt.ItemIsEnabled)  # Hacerlo no seleccionable
+        placeholder_item.setForeground(Qt.gray)  # Color del texto
+        placeholder_item.setFont(QFont("Arial", 10, QFont.StyleItalic))  # Estilo de la fuente
+        # Agregar el placeholder al QListWidget
+        self.list_users.addItem(placeholder_item)
+
+        # Add widgets to the layout
         self.main_layout.addWidget(text_title)
         self.main_layout.addWidget(self.btn_create_group)
         self.main_layout.addWidget(self.list_users)
 
         # Establecer el layout principal en la ventana
         self.setLayout(self.main_layout)
-
-        self.placeholder = QLabel("No hay nadie conectado...", self)
-        self.placeholder.setAlignment(Qt.AlignCenter)
-        self.placeholder.setStyleSheet("color: gray; font-style: italic;")
-        self.placeholder.setGeometry(
-            self.list_users.pos().x(),
-            self.list_users.pos().y(),
-            220,
-            200
-        )
 
         # conectar el usuario al server de difusion
         if self.sender_nickname not in USER_CLIENTS_CONNECTED_TO_DIFUSION:
@@ -376,8 +376,8 @@ class ChatroomWindows(QWidget):
 
     def update_user_list(self):
         """ Actualiza la lista de usuarios conectados. """
-        if len(USER_INFO_BY_NICKNAME) > 1:
-            self.placeholder.setVisible(False)
+        if len(USER_INFO_BY_NICKNAME) <= 1:
+            return
 
         self.list_users.clear()  # Limpiar la lista actual
         for recipient_nickname in USER_INFO_BY_NICKNAME.keys():
@@ -394,6 +394,33 @@ class ChatroomWindows(QWidget):
         if sender_nickname is None:
             sender_nickname = self.sender_nickname
         self.create_window_chat(recipient_nickname, sender_nickname)
+
+    def create_window_group(self):
+        # Crear una nueva ventana para el chat
+        self.group_chat = QMainWindow()
+        self.group_chat.setWindowTitle(f"Group chat")
+        self.group_chat.setGeometry(100, 100, 400, 500)
+
+        self.central_widget = QWidget()
+        self.group_chat.setCentralWidget(self.central_widget)
+        self.group_layout = QVBoxLayout(self.central_widget)
+
+        # Cuadro de texto para mostrar los mensajes del chat
+        self.chat_display = QTextEdit()
+        self.chat_display.setReadOnly(True)
+        self.group_layout.addWidget(self.chat_display)
+
+        # Cuadro de texto para escribir mensajes
+        self.chat_input = QLineEdit()
+        self.chat_input.setPlaceholderText("Escribe tu mensaje aquí...")
+        self.group_layout.addWidget(self.chat_input)
+
+        # Botón para enviar mensajes
+        send_button = QPushButton('Enviar')
+        send_button.clicked.connect(self.send_message)
+        self.group_layout.addWidget(send_button)
+
+        self.group_chat.show()
 
     def create_window_chat(self, recipient_nickname: str, sender_nickname: Optional[str] = None):
         if sender_nickname is None:
@@ -596,6 +623,7 @@ class NicknameWindow(QMainWindow):
 
         self.chatroom_windows = ChatroomWindows(nickname)
         self.chatroom_windows.show()
+        self.chatroom_windows.update()
         USERS_CHATROOMS_BY_NICKNAME[nickname] = self.chatroom_windows
 
 class MainWindow(QMainWindow):
