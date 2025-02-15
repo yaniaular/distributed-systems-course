@@ -323,20 +323,24 @@ class ChatroomWindows(QWidget):
         #self.chat_layout.addWidget(self.send_button)
 
         # Caja de lista para mostrar los usuarios conectados
-        self.frame_usuarios = QListWidget()
-        self.frame_usuarios.setLayout(QVBoxLayout())
+        self.list_users = QListWidget()
+        self.list_users.setLayout(QVBoxLayout())
 
         # Añadir los layouts al layout principal
         #self.main_layout.addLayout(self.chat_layout, 75)  # 75% del espacio para el chat
-        #self.main_layout.addWidget(self.frame_usuarios, 25)  # 25% del espacio para la lista de usuarios
+        #self.main_layout.addWidget(self.list_users, 25)  # 25% del espacio para la lista de usuarios
 
         text_title = QLabel("Usuarios conectados")
         text_title.setFont(QFont("Arial", 18, QFont.Bold))
         text_title.setAlignment(Qt.AlignCenter)
         text_title.setStyleSheet("color: white;")
 
+        self.btn_create_group = QPushButton("Crear grupo", self)
+        self.btn_create_group.clicked.connect(lambda: self.create_window_chat("difusion"))
+
         self.main_layout.addWidget(text_title)
-        self.main_layout.addWidget(self.frame_usuarios)
+        self.main_layout.addWidget(self.btn_create_group)
+        self.main_layout.addWidget(self.list_users)
 
         # Establecer el layout principal en la ventana
         self.setLayout(self.main_layout)
@@ -345,10 +349,10 @@ class ChatroomWindows(QWidget):
         self.placeholder.setAlignment(Qt.AlignCenter)
         self.placeholder.setStyleSheet("color: gray; font-style: italic;")
         self.placeholder.setGeometry(
-            self.frame_usuarios.pos().x(),
-            self.frame_usuarios.pos().y(),
+            self.list_users.pos().x(),
+            self.list_users.pos().y(),
             220,
-            130
+            200
         )
 
         # conectar el usuario al server de difusion
@@ -375,20 +379,18 @@ class ChatroomWindows(QWidget):
         if len(USER_INFO_BY_NICKNAME) > 1:
             self.placeholder.setVisible(False)
 
-        self.frame_usuarios.clear()  # Limpiar la lista actual
+        self.list_users.clear()  # Limpiar la lista actual
         for recipient_nickname in USER_INFO_BY_NICKNAME.keys():
             if self.sender_nickname == recipient_nickname:
                 continue
-            self.frame_usuarios.addItem(recipient_nickname)
-        self.frame_usuarios.itemClicked.connect(self.open_chat_item)
+            self.list_users.addItem(recipient_nickname)
+        self.list_users.itemClicked.connect(self.open_chat_from_list_users)
 
-    def open_chat_item(self, item, sender_nickname = None):
+    def open_chat_from_list_users(self, item):
         recipient_nickname = item.text()
-        if sender_nickname is None:
-            sender_nickname = self.sender_nickname
-        self.create_window_chat(recipient_nickname, sender_nickname)
+        self.create_window_chat(recipient_nickname, self.sender_nickname)
 
-    def open_chat(self, recipient_nickname, sender_nickname = None):
+    def open_chat_in_recipient_side(self, recipient_nickname, sender_nickname = None):
         if sender_nickname is None:
             sender_nickname = self.sender_nickname
         self.create_window_chat(recipient_nickname, sender_nickname)
@@ -467,7 +469,7 @@ class ChatroomWindows(QWidget):
                 recipient_user_info.tcp_servers[self.sender_nickname] = server
                 time.sleep(1)
                 chatroom_recipient = USERS_CHATROOMS_BY_NICKNAME[recipient_nickname]
-                chatroom_recipient.open_chat(recipient_nickname=self.sender_nickname,sender_nickname=recipient_nickname)
+                chatroom_recipient.open_chat_in_recipient_side(recipient_nickname=self.sender_nickname,sender_nickname=recipient_nickname)
                 recipient_user_info.check_incoming_messages_from[self.sender_nickname] = CheckIncomingMessages(server, chatroom_recipient)
 
             if recipient_nickname not in sender_user_info.tcp_servers: # si el sender no tiene un servidor para recibir mensajes del recipient, hay que crearlo
@@ -607,26 +609,26 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central_widget)
         layout = QVBoxLayout(central_widget)
 
-        self.btn_nickname = QPushButton("Conectarte al chatroom", self)
+        self.btn_nickname = QPushButton("Iniciar sesión", self)
         self.btn_nickname.clicked.connect(self.ask_nickname_window)
         layout.addWidget(self.btn_nickname)
 
-        self.btn_list_users = QPushButton("Revisar usuarios", self)
-        self.btn_list_users.clicked.connect(self.list_users)
-        layout.addWidget(self.btn_list_users)
-
-        self.btn_cerrar = QPushButton("Cerrar todo", self)
+        self.btn_cerrar = QPushButton("Cerrar todas las sesiones", self)
         self.btn_cerrar.clicked.connect(self.close_all)
         layout.addWidget(self.btn_cerrar)
+
+        self.btn_list_users = QPushButton("Debug", self)
+        self.btn_list_users.clicked.connect(self.list_users)
+        layout.addWidget(self.btn_list_users)
 
     def close_all(self):
         """ Cierra todos los servidores, clientes y ventanas. """
         for nickname, userinfo in USER_INFO_BY_NICKNAME.items():
-            for dest_name, client_socket in userinfo.tcp_clients.items():
-                client_socket.close()
-        for nickname, userinfo in USER_INFO_BY_NICKNAME.items():
             for dest_name, server_socket in userinfo.tcp_servers.items():
                 server_socket.terminate()
+        for nickname, userinfo in USER_INFO_BY_NICKNAME.items():
+            for dest_name, client_socket in userinfo.tcp_clients.items():
+                client_socket.close()
         for nickname, chatroom in USERS_CHATROOMS_BY_NICKNAME.items():
             chatroom.close()
         self.close()
