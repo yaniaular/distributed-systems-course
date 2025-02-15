@@ -53,8 +53,10 @@ class MulticastNode:
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
         # Después REUSEPORT (no siempre disponible)
-        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
-        self.sock.bind(('', self.port))
+        operative_system = os.uname().sysname
+        if operative_system != "Windows":
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+            self.sock.bind(('', self.port))
 
         group_bin = socket.inet_aton(self.group)
         mreq = struct.pack('4sL', group_bin, socket.INADDR_ANY)
