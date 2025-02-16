@@ -14,18 +14,25 @@ from PyQt5.QtWidgets import (
     QLabel, QLineEdit, QTextEdit, QHBoxLayout, QListWidget, QListWidgetItem
 )
 
-# Diccionario para almacenar los usuarios conectados
 USER_INFO_BY_NICKNAME = {}
 MAPPER_ADDR_TO_NICKNAME = {}
 USER_CLIENTS_CONNECTED_TO_DIFUSION = {}
 
 LOCAL_IP = "127.0.0.1"
+AVAILABLE_PORTS = set(range(20001, 20011))
 
 SERVER_DIFUSION = None
 CHECK_DIFUSION = {}
 LOCAL_IP_MULTICAST = "224.0.0.0"
 LOCAL_PORT_MULTICAST = 30001
 
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler()]
+)
+
+logger = logging.getLogger("App principal")
 
 def get_chatroom_by_address(address: str) -> Optional["ChatroomWindows"]:
     """ Retorna la ventana de chat asociada a la dirección IP. """
@@ -36,17 +43,6 @@ def get_chatroom_by_address(address: str) -> Optional["ChatroomWindows"]:
 def get_chatroom_by_nickname(nickname: str) -> Optional["ChatroomWindows"]:
     """ Retorna la ventana de chat asociada al nickname. """
     return USER_INFO_BY_NICKNAME.get(nickname).chatroom_window
-
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[logging.StreamHandler()]
-)
-
-# Crear un logger
-logger = logging.getLogger("App principal")
-
-AVAILABLE_PORTS = set(range(20001, 20011))
 
 class MulticastReceiver:
     """
@@ -195,22 +191,15 @@ class ServerTCP:
         )
 
     def start(self):
-        """ Inicia el servidor en un proceso aparte. """
         logger.info("Starting servidor ...")
         self.server_thread.start()
 
     def get_free_port(self):
-        """
-        Retorna un puerto libre del conjunto de puertos disponibles.
-        Si no hay puertos disponibles, lanza un error.
-        """
         if not AVAILABLE_PORTS:
             raise RuntimeError("No hay puertos disponibles")
-        # Extrae un puerto (y lo quita del conjunto disponible)
         return AVAILABLE_PORTS.pop()
 
     def terminate(self):
-        """ Termina el servidor y espera a que el proceso termine. """
         if self.server_thread.is_alive():
             logger.info("Terminando servidor...")
             self.stop_event.set()  # Activar la bandera para detener el proceso
@@ -222,7 +211,6 @@ class ServerTCP:
             AVAILABLE_PORTS.add(self.port)  # Devolver el puerto al conjunto
 
     def __del__(self):
-        """ Método que se ejecuta al liberar la memoria del objeto. """
         self.terminate()
 
     @staticmethod
@@ -305,35 +293,10 @@ class ChatroomWindows(QWidget):
 
         self.setWindowTitle(f"Chatroom de {self.sender_nickname}")
         self.setGeometry(100, 100, 300, 300)
-
-        # Layout principal (horizontal)
         self.main_layout = QVBoxLayout()
 
-        # Área de chat (izquierda)
-        #self.chat_layout = QVBoxLayout()
-
-        # Cuadro de texto para mostrar los mensajes del chat
-        #self.chat_display = QTextEdit()
-        #self.chat_display.setReadOnly(True)
-        #self.chat_layout.addWidget(self.chat_display)
-
-        # Cuadro de texto para escribir mensajes
-        #self.chat_input = QLineEdit()
-        #self.chat_input.setPlaceholderText("Escribe tu mensaje aquí...")
-        #self.chat_layout.addWidget(self.chat_input)
-
-        # Botón para enviar mensajes
-        #self.send_button = QPushButton('Enviar')
-        #self.send_button.clicked.connect(self.send_message)
-        #self.chat_layout.addWidget(self.send_button)
-
-        # Caja de lista para mostrar los usuarios conectados
         self.list_users = QListWidget()
         self.list_users.setLayout(QVBoxLayout())
-
-        # Añadir los layouts al layout principal
-        #self.main_layout.addLayout(self.chat_layout, 75)  # 75% del espacio para el chat
-        #self.main_layout.addWidget(self.list_users, 25)  # 25% del espacio para la lista de usuarios
 
         text_title = QLabel("Usuarios conectados")
         text_title.setFont(QFont("Arial", 18, QFont.Bold))
@@ -375,7 +338,7 @@ class ChatroomWindows(QWidget):
 
 
         self.timer = QTimer()
-        self.timer.timeout.connect(lambda: self.update_user_list())
+        self.timer.timeout.connect(self.update_user_list)
         self.timer.start(1000)
 
     def update_user_list(self):
@@ -402,7 +365,7 @@ class ChatroomWindows(QWidget):
     def create_window_group(self):
         # Crear una nueva ventana para el chat
         self.group_chat = QMainWindow()
-        self.group_chat.setWindowTitle(f"Group chat")
+        self.group_chat.setWindowTitle("Group chat")
         self.group_chat.setGeometry(100, 100, 400, 500)
 
         self.central_widget = QWidget()
@@ -467,9 +430,6 @@ class ChatroomWindows(QWidget):
         # Obtener el mensaje del cuadro de texto
         message = self.chat_input.text()
         if message:
-            # Mostrar el mensaje en el cuadro de chat
-            #self.chat_display.append(f"Tú: {message}")
-            # Limpiar el cuadro de texto
             self.chat_input.clear()
 
             print(self.sender_nickname)
@@ -477,8 +437,6 @@ class ChatroomWindows(QWidget):
             client_socket = USER_CLIENTS_CONNECTED_TO_DIFUSION[self.sender_nickname]
             print(client_socket)
             client_socket.send_message(": ".join([self.sender_nickname, message]))
-            #data = "test"
-            #print('DIfusion: ' + data)
 
 
     def send_message_item(self, recipient_nickname: str):
@@ -546,9 +504,6 @@ class CheckIncomingMessages:
         self.timer.start(100)
 
     def check_incoming_messages(self):
-        # quede en como voy a partir el condicional de cuando es chat privado y cuando difusion
-        # como lo voy a mandar? debo crear un server por cada usuario para difusion? o
-        # solo modificar la interfaz
         try:
 
             # Intentar obtener un mensaje de la cola
@@ -577,10 +532,6 @@ class CheckIncomingMessages:
 
                 for nickname, user_info in USER_INFO_BY_NICKNAME.items():
                     chatroom = user_info.chatroom_window
-                    #print(f"recipient_nickname {recipient_nickname}")
-                    #print(f"message {mensaje}")
-                    #if addr == address:
-                    #    continue
                     print(chatroom.sender_nickname)
                     print(chatroom.chat_display)
                     chatroom.chat_display.append(f"{address}: {mensaje}")
