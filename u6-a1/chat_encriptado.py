@@ -16,19 +16,26 @@ from PyQt5.QtWidgets import (
 
 # Diccionario para almacenar los usuarios conectados
 USER_INFO_BY_NICKNAME = {}
-USERS_CHATROOMS_BY_NICKNAME = {}
-USERS_CHATROOMS_BY_ADDR = {}
-
+MAPPER_ADDR_TO_NICKNAME = {}
 USER_CLIENTS_CONNECTED_TO_DIFUSION = {}
+
+LOCAL_IP = "127.0.0.1"
 
 SERVER_DIFUSION = None
 CHECK_DIFUSION = {}
-
-# Configuración del servidor
-LOCAL_IP = "127.0.0.1"
-
 LOCAL_IP_MULTICAST = "224.0.0.0"
 LOCAL_PORT_MULTICAST = 30001
+
+
+def get_chatroom_by_address(address: str) -> Optional["ChatroomWindows"]:
+    """ Retorna la ventana de chat asociada a la dirección IP. """
+    nickname = MAPPER_ADDR_TO_NICKNAME.get(address)
+    if nickname:
+        return USER_INFO_BY_NICKNAME[nickname].chatroom_window
+
+def get_chatroom_by_nickname(nickname: str) -> Optional["ChatroomWindows"]:
+    """ Retorna la ventana de chat asociada al nickname. """
+    return USER_INFO_BY_NICKNAME.get(nickname).chatroom_window
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -292,8 +299,6 @@ class ChatroomWindows(QWidget):
         super().__init__()
 
         self.sender_nickname = nickname
-        USER_INFO_BY_NICKNAME[self.sender_nickname] = UserInfo(nickname, self) # TODO: se puede resumir a una variable
-
         self.chat_windows = {} # Diccionario para almacenar las ventanas de chat que tiene abiertas el sender
         self.text_box = {} # Diccionario para almacenar los QTextEdit de cada chat
         self.entry_message = {} # Diccionario para almacenar los QLineEdit de cada chat
@@ -363,10 +368,9 @@ class ChatroomWindows(QWidget):
                 )
             time.sleep(1)
             USER_CLIENTS_CONNECTED_TO_DIFUSION[self.sender_nickname] = client_socket
-            USERS_CHATROOMS_BY_ADDR[client_socket.client_socket.getsockname()] = self
+            MAPPER_ADDR_TO_NICKNAME[client_socket.client_socket.getsockname()] = self.sender_nickname
             CHECK_DIFUSION[nickname] = CheckIncomingMessages(SERVER_DIFUSION, self, "difusion")
             print(USER_CLIENTS_CONNECTED_TO_DIFUSION)
-            print(USERS_CHATROOMS_BY_ADDR)
             print(CHECK_DIFUSION)
 
 
@@ -495,7 +499,7 @@ class ChatroomWindows(QWidget):
                 server.start()
                 recipient_user_info.tcp_servers[self.sender_nickname] = server
                 time.sleep(1)
-                chatroom_recipient = USERS_CHATROOMS_BY_NICKNAME[recipient_nickname]
+                chatroom_recipient = USER_INFO_BY_NICKNAME[recipient_nickname].chatroom_window
                 chatroom_recipient.open_chat_in_recipient_side(recipient_nickname=self.sender_nickname,sender_nickname=recipient_nickname)
                 recipient_user_info.check_incoming_messages_from[self.sender_nickname] = CheckIncomingMessages(server, chatroom_recipient)
 
@@ -511,7 +515,7 @@ class ChatroomWindows(QWidget):
                 client_socket = ClientTCP(f"client_of_{self.sender_nickname}_to_send_messages_to_{recipient_nickname}", recipient_user_server_for_sender.ip, recipient_user_server_for_sender.port)
                 time.sleep(1)
                 sender_user_info.tcp_clients[recipient_nickname] = client_socket
-                USERS_CHATROOMS_BY_ADDR[client_socket.client_socket.getsockname()] = self
+                MAPPER_ADDR_TO_NICKNAME[client_socket.client_socket.getsockname()] = self.sender_nickname
 
             if self.sender_nickname not in recipient_user_info.tcp_clients: # si el recipient no tiene creado un cliente para escribirle al sender, hay que crearlo
                 sender_user_server_for_recipient = sender_user_info.tcp_servers[recipient_nickname]
@@ -520,7 +524,7 @@ class ChatroomWindows(QWidget):
                 recipient_user_info.tcp_clients[self.sender_nickname] = client_socket
 
                 if chatroom_recipient is not None:
-                    USERS_CHATROOMS_BY_ADDR[client_socket.client_socket.getsockname()] = chatroom_recipient
+                    MAPPER_ADDR_TO_NICKNAME[client_socket.client_socket.getsockname()] = recipient_nickname
 
             client_socket = sender_user_info.tcp_clients[recipient_nickname]
             data = client_socket.send_message(message)
@@ -554,7 +558,7 @@ class CheckIncomingMessages:
             if self.chat_type == "private":
                 # Obtener el chatroom de la persona que le envió el mensaje a este self.server
                 # esto es para obtener el nickname después
-                chat_window = USERS_CHATROOMS_BY_ADDR.get(address)
+                chat_window = get_chatroom_by_address(address)
                 print(chat_window)
                 
                 # Nickname de la persona que le envió el mensaje a este self.server
@@ -571,7 +575,8 @@ class CheckIncomingMessages:
             else: # difusion
                 print(f" direccion: {address} y Mensaje de multicast {mensaje}")
 
-                for nickname, chatroom in USERS_CHATROOMS_BY_NICKNAME.items():
+                for nickname, user_info in USER_INFO_BY_NICKNAME.items():
+                    chatroom = user_info.chatroom_window
                     #print(f"recipient_nickname {recipient_nickname}")
                     #print(f"message {mensaje}")
                     #if addr == address:
@@ -624,7 +629,7 @@ class NicknameWindow(QMainWindow):
         self.chatroom_windows = ChatroomWindows(nickname)
         self.chatroom_windows.show()
         self.chatroom_windows.update()
-        USERS_CHATROOMS_BY_NICKNAME[nickname] = self.chatroom_windows
+        USER_INFO_BY_NICKNAME[nickname] = UserInfo(nickname, self.chatroom_windows)
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -657,8 +662,8 @@ class MainWindow(QMainWindow):
         for nickname, userinfo in USER_INFO_BY_NICKNAME.items():
             for dest_name, client_socket in userinfo.tcp_clients.items():
                 client_socket.close()
-        for nickname, chatroom in USERS_CHATROOMS_BY_NICKNAME.items():
-            chatroom.close()
+        for nickname, userinfo in USER_INFO_BY_NICKNAME.items():
+            userinfo.chatroom_window.close()
         self.close()
         #SERVER_DIFUSION.terminate()
 
@@ -669,8 +674,8 @@ class MainWindow(QMainWindow):
     def list_users(self):
         for nickname, user_info in USER_INFO_BY_NICKNAME.items():
             print(nickname, user_info)
-        for nickname, chatroom_window in USERS_CHATROOMS_BY_NICKNAME.items():
-            print(nickname, chatroom_window)
+        for nickname, user_info in USER_INFO_BY_NICKNAME.items():
+            print(nickname, user_info.chatroom_window)
 
 class UserInfo:
     def __init__(self, nickname: str, chatroom_window: ChatroomWindows):
