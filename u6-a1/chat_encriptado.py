@@ -5,7 +5,9 @@ import time
 import multiprocessing
 import queue
 import struct
+import errno
 import os
+import threading
 from typing import Optional, Dict
 from PyQt5.QtCore import QTimer, Qt
 from PyQt5.QtGui import QFont
@@ -16,15 +18,12 @@ from PyQt5.QtWidgets import (
 
 USER_INFO_BY_NICKNAME = {}
 MAPPER_ADDR_TO_NICKNAME = {}
-USER_CLIENTS_CONNECTED_TO_DIFUSION = {}
 
 LOCAL_IP = "127.0.0.1"
 AVAILABLE_PORTS = set(range(20001, 20011))
 
-SERVER_DIFUSION = None
-CHECK_DIFUSION = {}
-LOCAL_IP_MULTICAST = "224.0.0.0"
-LOCAL_PORT_MULTICAST = 30001
+# Para enviar mensajes a todos los nodos conectados al grupo multicast
+MULTICAST_NODE = None
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -43,117 +42,6 @@ def get_chatroom_by_address(address: str) -> Optional["ChatroomWindows"]:
 def get_chatroom_by_nickname(nickname: str) -> Optional["ChatroomWindows"]:
     """ Retorna la ventana de chat asociada al nickname. """
     return USER_INFO_BY_NICKNAME.get(nickname).chatroom_window
-
-class MulticastReceiver:
-    """
-    Clase para recibir mensajes de un grupo multicast específico.
-    """
-
-    def __init__(self, multicast_group, port):
-        """
-        Constructor que configura el socket para unirse al grupo multicast.
-        """
-        self.multicast_group = multicast_group
-        self.ip = multicast_group
-        self.port = port
-
-        self.incoming_queue = multiprocessing.Queue()
-        self.address = (self.ip, self.port)
-        self.stop_event = multiprocessing.Event() # Bandera para detener el proceso
-        self.server_thread = multiprocessing.Process(
-            target=self.listen_forever,
-            args=(self.incoming_queue,
-                  self.address,
-                  10),
-            daemon=True
-        )
-
-    def start(self):
-        """ Inicia el servidor en un proceso aparte. """
-        logger.info("Starting servidor ...")
-        self.server_thread.start()
-
-    @staticmethod
-    def listen_forever(incoming_queue, address, maximum_connections):
-        """
-        Escucha indefinidamente los mensajes que lleguen al grupo multicast.
-        """
-        multicast_group, port = address 
-        ttl = 1
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-
-        # Después REUSEPORT (no siempre disponible)
-        operative_system = os.uname().sysname
-        if operative_system != "Windows":
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
-        
-        sock.bind(('', port))
-
-        # Convertir la dirección multicast a formato binario y unirse al grupo
-        group_bin = socket.inet_aton(multicast_group)
-        mreq = struct.pack('4sL', group_bin, socket.INADDR_ANY)
-        sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
-
-        ttl_bin = struct.pack('@i', ttl)
-        sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, ttl_bin)
-
-        print(f"[MulticastReceiver] Escuchando en grupo {multicast_group}:{port} (TTL={ttl}).")
-
-        try:
-            while True:
-                data, address = sock.recvfrom(1024)
-                print(f"[Receptor] Recibido de {address}: {data.decode('utf-8', errors='replace')}")
-                msg = data.decode('utf-8', errors='replace')
-                incoming_queue.put((msg, address))
-        except KeyboardInterrupt:
-            print("\n[Receptor] Finalizando recepción...")
-        finally:
-            sock.close()
-
-
-class MulticastSender:
-    """
-    Clase para enviar mensajes a un grupo multicast específico.
-    """
-
-    def __init__(self, multicast_group, port, ttl=1):
-        """
-        Constructor que configura el socket para enviar mensajes multicast.
-        :param multicast_group: Dirección IP del grupo multicast (224.0.0.0 a 239.255.255.255)
-        :param port: Puerto de destino
-        :param ttl: Time-To-Live para limitar alcance (1 => no sale de la red local)
-        """
-        self.multicast_group = multicast_group
-        self.port = port
-
-        # Crear un socket UDP
-        self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-
-        # Empaquetar el TTL (time-to-live) en un byte y asignarlo al socket
-        ttl_bin = struct.pack('b', ttl)
-        self.client_socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, ttl_bin)
-
-    def send_message(self, message):
-        """
-        Envía un mensaje al grupo multicast.
-        """
-        try:
-            print(f"[Emisor] Enviando: {message} -> {self.multicast_group}:{self.port}")
-            # Se envían los datos en bytes
-            self.client_socket.sendto(message.encode('utf-8'), (self.multicast_group, self.port))
-        except Exception as e:
-            print(f"[Emisor] Error enviando mensaje: {e}")
-        # No cerramos el socket todavía, en caso de querer enviar más mensajes
-
-    def close(self):
-        """
-        Cierra el socket del emisor.
-        """
-        self.client_socket.close()
-        print("[Emisor] Socket cerrado")
-
-
 
 class ServerTCP:
     """ Clase que representa un servidor TCP.
@@ -323,20 +211,6 @@ class ChatroomWindows(QWidget):
         # Establecer el layout principal en la ventana
         self.setLayout(self.main_layout)
 
-        # conectar el usuario al server de difusion
-        if self.sender_nickname not in USER_CLIENTS_CONNECTED_TO_DIFUSION:
-            client_socket = MulticastSender(
-                SERVER_DIFUSION.ip,
-                SERVER_DIFUSION.port
-                )
-            time.sleep(1)
-            USER_CLIENTS_CONNECTED_TO_DIFUSION[self.sender_nickname] = client_socket
-            MAPPER_ADDR_TO_NICKNAME[client_socket.client_socket.getsockname()] = self.sender_nickname
-            CHECK_DIFUSION[nickname] = CheckIncomingMessages(SERVER_DIFUSION, self, "difusion")
-            print(USER_CLIENTS_CONNECTED_TO_DIFUSION)
-            print(CHECK_DIFUSION)
-
-
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_user_list)
         self.timer.start(1000)
@@ -384,10 +258,17 @@ class ChatroomWindows(QWidget):
 
         # Botón para enviar mensajes
         send_button = QPushButton('Enviar')
-        send_button.clicked.connect(self.send_message)
+        send_button.clicked.connect(self.send_message_group)
         self.group_layout.addWidget(send_button)
-
         self.group_chat.show()
+
+    def send_message_group(self):
+        # TODO: implementar lógica para cada acción
+        message = self.chat_input.text()
+        if message:
+            self.chat_input.clear()
+            action = "ACTION"
+            MULTICAST_NODE.send(f"{action}:{self.sender_nickname}:{message}")
 
     def create_window_chat(self, recipient_nickname: str, sender_nickname: Optional[str] = None):
         if sender_nickname is None:
@@ -426,19 +307,6 @@ class ChatroomWindows(QWidget):
         layout.addWidget(frame_entrada)
         self.chat_windows[recipient_nickname].show()
 
-    def send_message(self):
-        # Obtener el mensaje del cuadro de texto
-        message = self.chat_input.text()
-        if message:
-            self.chat_input.clear()
-
-            print(self.sender_nickname)
-            print(USER_CLIENTS_CONNECTED_TO_DIFUSION)
-            client_socket = USER_CLIENTS_CONNECTED_TO_DIFUSION[self.sender_nickname]
-            print(client_socket)
-            client_socket.send_message(": ".join([self.sender_nickname, message]))
-
-
     def send_message_item(self, recipient_nickname: str):
         """ Envía un mensaje y lo muestra en el área de mensajes. """
         message = self.entry_message[recipient_nickname].text()
@@ -452,12 +320,13 @@ class ChatroomWindows(QWidget):
             recipient_user_info = USER_INFO_BY_NICKNAME[recipient_nickname] #paco
 
             chatroom_recipient = None
-            if self.sender_nickname not in recipient_user_info.tcp_servers: # si el recipient no tiene un servidor para recibir mensajes del sender, hay que crearlo
+            if self.sender_nickname not in recipient_user_info.tcp_servers: # si el recipient no tiene un servidor tcp para recibir mensajes del sender, hay que crearlo
+                # TODO: mandar mensaje al orchestrator para que se cree el servidor del lado del recipient
                 server = ServerTCP(f"server_of_{recipient_nickname}_to_receive_messages_from_{self.sender_nickname}", LOCAL_IP)
                 server.start()
                 recipient_user_info.tcp_servers[self.sender_nickname] = server
                 time.sleep(1)
-                chatroom_recipient = USER_INFO_BY_NICKNAME[recipient_nickname].chatroom_window
+                chatroom_recipient = get_chatroom_by_nickname(recipient_nickname)
                 chatroom_recipient.open_chat_in_recipient_side(recipient_nickname=self.sender_nickname,sender_nickname=recipient_nickname)
                 recipient_user_info.check_incoming_messages_from[self.sender_nickname] = CheckIncomingMessages(server, chatroom_recipient)
 
@@ -476,6 +345,7 @@ class ChatroomWindows(QWidget):
                 MAPPER_ADDR_TO_NICKNAME[client_socket.client_socket.getsockname()] = self.sender_nickname
 
             if self.sender_nickname not in recipient_user_info.tcp_clients: # si el recipient no tiene creado un cliente para escribirle al sender, hay que crearlo
+                # TODO: mandar mensaje al orchestrator para que se cree el cliente del lado del recipient
                 sender_user_server_for_recipient = sender_user_info.tcp_servers[recipient_nickname]
                 client_socket = ClientTCP(f"client_of_{recipient_nickname}_to_send_messages_to_{self.sender_nickname}", sender_user_server_for_recipient.ip, sender_user_server_for_recipient.port)
                 time.sleep(1)
@@ -505,12 +375,8 @@ class CheckIncomingMessages:
 
     def check_incoming_messages(self):
         try:
-
-            # Intentar obtener un mensaje de la cola
-
             mensaje, address = self.server.incoming_queue.get_nowait()
-
-            if self.chat_type == "private":
+            if self.chat_type == "private": # TODO siempre es privado, antes se usaba para difusion
                 # Obtener el chatroom de la persona que le envió el mensaje a este self.server
                 # esto es para obtener el nickname después
                 chat_window = get_chatroom_by_address(address)
@@ -524,19 +390,10 @@ class CheckIncomingMessages:
                 print(f"recipient_nickname {self.chatroom.sender_nickname}")
 
                 # El mensaje recibido debe mostrarse en la ventana de chat del
-                # que recibió (el recipient). Entonces en el chatroom del recipient
-                # buscanmos la ventana de chat que tiene abierta con el sender
+                # que recibió (el recipient).
+                # TODO: esto debe cambiar a enviar un mensaje al orchestrator
+                # ya que ahorita actualiza la interfaz gráfica directamente
                 self.chatroom.text_box[sender_nickname].append(f"{sender_nickname}: {mensaje}")
-            else: # difusion
-                print(f" direccion: {address} y Mensaje de multicast {mensaje}")
-
-                for nickname, user_info in USER_INFO_BY_NICKNAME.items():
-                    chatroom = user_info.chatroom_window
-                    print(chatroom.sender_nickname)
-                    print(chatroom.chat_display)
-                    chatroom.chat_display.append(f"{address}: {mensaje}")
-                    print("llegue aqui")
-                    # subir mensajes al chat de difusion del recipient
         except queue.Empty:
             # Si no hay mensajes en la cola, continuar
             pass
@@ -616,7 +473,6 @@ class MainWindow(QMainWindow):
         for nickname, userinfo in USER_INFO_BY_NICKNAME.items():
             userinfo.chatroom_window.close()
         self.close()
-        #SERVER_DIFUSION.terminate()
 
     def ask_nickname_window(self):
         self.nickname_window = NicknameWindow()
@@ -641,12 +497,133 @@ class UserInfo:
         self.tcp_servers = {}
         self.check_incoming_messages_from = {}
 
+class MulticastNode:
+    """ Esta clase se encarga de crear un nodo el cual creará una conexión multicast 
+    para difundir mensajes a todos los demás nodos conectados al grupo multicast. 
+    Los mensajes son almacenados en una cola incoming_messages_queue y deben ser
+    procesados por otro hilo.
+
+    IMPORTANTE! Debe implementarse la lógica para procesar los mensajes recibidos y 
+    guardados en el atributo incoming_messages_queue.
+    """
+    def __init__(self, group, port, ttl=1):
+        self.group = group # Dirección de grupo multicast
+        self.port = port # Puerto multicast
+        self.ttl = ttl # Time-to-live (saltos máximos)
+        self.sock = None # Socket multicast
+        self.incoming_messages_queue = None # Cola de mensajes entrantes
+        self.stop_event = None # Evento para detener el hilo de escucha
+        self.receiver_thread = None # Hilo de escucha
+        self.start() # Iniciar hilo de escucha
+
+    def start(self):
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+        operative_system = os.uname().sysname
+        if operative_system != "Windows":
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        
+        self.sock.bind(('', self.port))
+
+        group_bin = socket.inet_aton(self.group)
+        mreq = struct.pack('4sL', group_bin, socket.INADDR_ANY)
+        self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+
+        ttl_bin = struct.pack('@i', self.ttl)
+        self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, ttl_bin)
+
+        print(f"[MulticastReceiver] Escuchando en grupo {self.group}:{self.port} (TTL={self.ttl}).")
+
+        self.incoming_messages_queue = multiprocessing.Queue()
+        self.stop_event = multiprocessing.Event()
+        self.receiver_thread = multiprocessing.Process(
+            target=self.receiver,
+            args=(self.sock,self.incoming_messages_queue, self.group, self.port, self.stop_event),
+            daemon=True
+        )
+        self.receiver_thread.start()
+
+    def stop(self):
+        print("[MulticastReceiver] Deteniendo receptor...")
+        self.stop_event.set()
+        self.receiver_thread.terminate()
+        self.receiver_thread.join()
+        
+    @staticmethod
+    def receiver(sock, queue, group, port, stop_event):
+        while not stop_event.is_set():
+            try:
+                data, addr = sock.recvfrom(1024)
+                msg = data.decode('utf-8', errors='replace')
+                queue.put((msg, addr))
+            except socket.timeout:
+                pass
+            except OSError as e:
+                # Verificar si es 'Resource temporarily unavailable'
+                if e.errno == errno.EAGAIN or e.errno == errno.EWOULDBLOCK:
+                    # Podemos ignorar este error y seguir esperando
+                    continue
+                else:
+                    # Si es otro error, lo mostramos o lo manejamos
+                    print("[RECEIVER] Error recibiendo:", e)
+                    break
+            except Exception as e:
+                print("[RECEIVER] Error recibiendo:", e)
+                break
+        sock.close()
+        print("[MulticastReceiver] Finalizando proceso de escucha.")
+
+    def send(self, msg):
+        try:
+            data = msg.encode('utf-8')
+            self.sock.sendto(data, (self.group, self.port))
+            print(f"[ENVIADO] {msg}")
+        except (KeyboardInterrupt, EOFError):
+            sys.exit(0)
+        except Exception as e:
+            print(f"[ERROR] {e}")
+
+class IncomingMessageOrchestrator:
+    """ Esta clase crea un hilo que se enacarga de procesar los mensajes
+    entrantes en el atributo incoming_messages_queue de un nodo multicast.
+    """
+    def __init__(self, node: MulticastNode, is_master: bool):
+        process_incoming_thread = threading.Thread(
+            target=self.process,
+            args=(node, is_master),
+            daemon=True
+        )
+        process_incoming_thread.start()
+
+    def process(self, node, is_master):
+        while True:
+            try:
+                msg, addr = node.incoming_messages_queue.get()
+                if msg:
+                    arguments = msg.split(":")
+                    action = arguments[0]
+                    sender_nickname = arguments[1]
+                    self.check_action(action, sender_nickname, is_master)
+            except queue.Empty:
+                pass
+            except Exception as e:
+                print(f"[ERROR] {e}")
+                break
+    
+    def check_action(self, action, sender_nickname, is_master):
+        # TODO: implementar lógica para procesar mensajes
+        pass
 
 def main():
-    global SERVER_DIFUSION
-    SERVER_DIFUSION = MulticastReceiver(LOCAL_IP_MULTICAST, LOCAL_PORT_MULTICAST)
-    SERVER_DIFUSION.start()
-    time.sleep(1)
+    global MULTICAST_NODE
+    # Conectarse a un servidor multicast para comunicación interna o técnica entre nodos.
+    # Esto actuará como orquestador de mensajes entre los nodos.
+    ip_multicast = "224.0.0.0"
+    port_multicast = 30001
+    is_master = True if len(sys.argv) > 1 and sys.argv[1] == "master" else False
+    MULTICAST_NODE = MulticastNode(ip_multicast, port_multicast)
+    IncomingMessageOrchestrator(MULTICAST_NODE, is_master)
 
     app = QApplication(sys.argv)
     ventana = MainWindow()
