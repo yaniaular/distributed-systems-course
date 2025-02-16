@@ -44,15 +44,6 @@ def get_chatroom_by_nickname(nickname: str) -> Optional["ChatroomWindows"]:
     return USER_INFO_BY_NICKNAME.get(nickname).chatroom_window
 
 class ServerTCP:
-    """ Clase que representa un servidor TCP.
-
-    Atributos:
-        incoming_queue (multiprocessing.Queue): Cola de mensajes recibidos.
-        server_thread (multiprocessing.Process): Proceso del servidor.
-        address (Tuple[str, int]): Dirección IP y puerto del servidor.
-        buffer_size (int): Tamaño del buffer para recibir mensajes.
-        maximum_connections (int): Número máximo de conexiones de clientes simultáneas.
-    """
 
     def __init__(self,
                  name: str,
@@ -87,6 +78,29 @@ class ServerTCP:
             raise RuntimeError("No hay puertos disponibles")
         return AVAILABLE_PORTS.pop()
 
+    @staticmethod
+    def server_process(incoming_queue, address, buffer_size, maximum_connections):
+        server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server_socket.bind(address)
+        server_socket.listen(maximum_connections)
+
+        try:
+            conn, addr = server_socket.accept()
+            logger.info("Conexión establecida con: %s", addr)
+
+            while True:
+                data = conn.recv(buffer_size)
+                if data:
+                    msg = data.decode('utf-8')
+                    incoming_queue.put((msg, addr))
+                    logger.info("Mensaje recibido de %s: %s", str(addr), str(msg))
+                    ack = "ACK"
+                    conn.send(ack.encode())
+        except KeyboardInterrupt:
+            logger.warning("\n[KeyboardInterrupt] Servidor cerrando conexión...")
+        except Exception as e:
+            logger.error("Ocurrió un error: %s", e)
+
     def terminate(self):
         if self.server_thread.is_alive():
             logger.info("Terminando servidor...")
@@ -101,55 +115,7 @@ class ServerTCP:
     def __del__(self):
         self.terminate()
 
-    @staticmethod
-    def server_process(incoming_queue, address, buffer_size, maximum_connections):
-        """ Proceso que se encarga de escuchar en (ip:port) usando TCP.
-        
-        Cada mensaje que reciba lo coloca en 'incoming_queue' para 
-        que la interfaz u otro proceso pueda acceder a él.
-        """
-        server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
-        # Enlazar el socket para escuchar mensajes de los clientes
-        server_socket.bind(address)
-
-        # Configurar cuántos clientes puede escuchar el servidor simultáneamente
-        server_socket.listen(maximum_connections)
-
-        try:
-            # Aceptar la conexión entrante, conn es el socket
-            # para comunicarse con el cliente
-            logger.info("Esperando conexión...")
-            conn, addr = server_socket.accept()
-            logger.info("Conexión establecida con: %s", addr)
-
-            while True:
-                # Recibir mensaje del cliente
-                data = conn.recv(buffer_size)
-                if data:
-                    msg = data.decode('utf-8')
-                    # Colocar el mensaje en la cola de mensajes entrantes
-                    # para poder acceder a él desde otro proceso
-                    incoming_queue.put((msg, addr))
-                    logger.info("Mensaje recibido de %s: %s", str(addr), str(msg))
-
-                    ack = "ACK"
-                    conn.send(ack.encode())
-                    logger.info("Enviando ACK al cliente...")
-        except KeyboardInterrupt:
-            logger.warning("\n[KeyboardInterrupt] Servidor cerrando conexión...")
-        except Exception as e:
-            logger.error("Ocurrió un error: %s", e)
-
 class ClientTCP:
-    """ Clase que representa un cliente TCP
-
-    Atributos:
-        address (Tuple[str, int]): Dirección IP y puerto del servidor.
-        buffer_size (int): Tamaño del buffer para recibir mensajes.
-        client_socket (socket.socket): Socket del cliente.
-    """
-
     def __init__(self, name: str, ip: str, port: int, buffer_size: Optional[int] = 1024):
         self.name = name
         self.address = (ip, port)
@@ -159,12 +125,10 @@ class ClientTCP:
         logger.info("Conexión establecida con el servidor!")
 
     def send_message(self, message: str):
-        print("Enviando mensaje al servidor... {message}")
+        print(f"Enviando mensaje al servidor... {message}")
         self.client_socket.send(message.encode())
-        print("Mensaje enviado!")
         data = self.client_socket.recv(self.buffer_size).decode()
-        print("Recibido ACK del servidor!")
-        print(f"Servidor: {data}")
+        print(f"Recibido ACK del servidor! {data}")
         return data
 
     def close(self):
