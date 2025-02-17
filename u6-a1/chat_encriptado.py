@@ -328,10 +328,13 @@ class ChatroomWindows(QWidget):
             self.entry_message[recipient_nickname].clear()
 
             recipient_user_info = USER_INFO_BY_NICKNAME[recipient_nickname] #paco
-
-            client_socket = recipient_user_info.client
-            data = client_socket.send_message(message)
-            print('Servidor: ' + data)
+            print(f"USER_INFO_BY_NICKNAME {USER_INFO_BY_NICKNAME}")
+            for nickname, user_info in USER_INFO_BY_NICKNAME.items():
+                print(f"nickname {nickname} user_info {user_info}")
+            
+            #client_socket = recipient_user_info.client
+            #data = client_socket.send_message(message)
+            #print('Servidor: ' + data)
 
     def send_request_to_create_tcp_server(self, recipient_nickname):
         """ This method send a request to create a tcp server in the recipient side
