@@ -245,65 +245,71 @@ class ChatroomWindows(QWidget):
     def create_window_chat(self, recipient_nickname: str, sender_nickname: Optional[str] = None):
         if sender_nickname is None:
             sender_nickname = self.sender_nickname
-        # TODO: guardar chat_windows, text_box y entry_message en USER_INFO_BY_NICKNAME
 
-        # Crear una nueva ventana para el chat
-        self.chat_windows[recipient_nickname] = QMainWindow() 
-        self.chat_windows[recipient_nickname].setWindowTitle(
-            f"[{sender_nickname}] Chat con {recipient_nickname}")
-        self.chat_windows[recipient_nickname].setGeometry(100, 100, 400, 500)
-
-        central_widget = QWidget()
-        self.chat_windows[recipient_nickname].setCentralWidget(central_widget)
-        layout = QVBoxLayout(central_widget)
-
-        # Área de visualización de mensajes
-        self.text_box[recipient_nickname] = QTextEdit(self.chat_windows[recipient_nickname])
-        self.text_box[recipient_nickname].setReadOnly(True)
-        self.text_box[recipient_nickname].setFont(self.get_font(12))
-        layout.addWidget(self.text_box[recipient_nickname])
-
-        # Cuadro de texto para escribir mensajes
-        frame_entrada = QWidget()
-        frame_entrada.setLayout(QHBoxLayout())
-
-        self.entry_message[recipient_nickname] = QLineEdit(frame_entrada)
-        self.entry_message[recipient_nickname].setFont(self.get_font(12))
-        frame_entrada.layout().addWidget(self.entry_message[recipient_nickname])
-
-        # Botón para enviar mensajes
-        btn_enviar = QPushButton("Enviar", frame_entrada)
-        btn_enviar.setFont(self.get_font(12))
-        btn_enviar.clicked.connect(lambda: self.send_message_item(recipient_nickname))
-        frame_entrada.layout().addWidget(btn_enviar)
-
-        layout.addWidget(frame_entrada)
-        self.chat_windows[recipient_nickname].show()
-
-        # TODO: Esto deberia ir en un metodo separado
         user_info = USER_INFO_BY_NICKNAME.get(recipient_nickname, False)
-        user_info.private_chat = self.chat_windows[recipient_nickname]
-        user_info.visual_chat = self.text_box[recipient_nickname]
-        user_info.entry_message = self.entry_message[recipient_nickname]
+        if not user_info:
+            USER_INFO_BY_NICKNAME[recipient_nickname] = UserInfo(recipient_nickname)
+            user_info = USER_INFO_BY_NICKNAME[recipient_nickname]
+        
+        if recipient_nickname not in self.chat_windows:
+            # Crear una nueva ventana para el chat
+            self.chat_windows[recipient_nickname] = QMainWindow() 
+            self.chat_windows[recipient_nickname].setWindowTitle(
+                f"[{sender_nickname}] Chat con {recipient_nickname}")
+            self.chat_windows[recipient_nickname].setGeometry(100, 100, 400, 500)
 
-        # si el recipient no tiene un servidor tcp para recibir mensajes del sender
-        # hay que decirle al recipient que cree uno
-        self.send_request_to_create_tcp_server(recipient_nickname)
-        time.sleep(1)
+            central_widget = QWidget()
+            self.chat_windows[recipient_nickname].setCentralWidget(central_widget)
+            layout = QVBoxLayout(central_widget)
 
-        # si el sender no tiene un servidor tcp para recibir mensajes del recipient, hay que crearlo
-        port = get_free_port()
-        server = ServerTCP(f"server_of_{self.sender_nickname}_to_receive_messages_from_{recipient_nickname}", LOCAL_IP, port)
-        server.start()
-        time.sleep(1)
-        user_info.server_listening = server
-        user_info.check_incoming_messages = CheckIncomingMessages(server, self) # mando el chatroom para que pueda actualizar la interfaz
+            # Área de visualización de mensajes
+            self.text_box[recipient_nickname] = QTextEdit(self.chat_windows[recipient_nickname])
+            self.text_box[recipient_nickname].setReadOnly(True)
+            self.text_box[recipient_nickname].setFont(self.get_font(12))
+            layout.addWidget(self.text_box[recipient_nickname])
 
-        # si el recipient no tiene un cliente para escribirnos
-        # hay que decirle al recipient que cree uno
-        self.send_request_to_create_tcp_client(recipient_nickname, port)
+            # Cuadro de texto para escribir mensajes
+            frame_entrada = QWidget()
+            frame_entrada.setLayout(QHBoxLayout())
+
+            self.entry_message[recipient_nickname] = QLineEdit(frame_entrada)
+            self.entry_message[recipient_nickname].setFont(self.get_font(12))
+            frame_entrada.layout().addWidget(self.entry_message[recipient_nickname])
+
+            # Botón para enviar mensajes
+            btn_enviar = QPushButton("Enviar", frame_entrada)
+            btn_enviar.setFont(self.get_font(12))
+            btn_enviar.clicked.connect(lambda: self.send_message_item(recipient_nickname))
+            frame_entrada.layout().addWidget(btn_enviar)
+
+            layout.addWidget(frame_entrada)
+
+            user_info.private_chat = self.chat_windows[recipient_nickname]
+            user_info.visual_chat = self.text_box[recipient_nickname]
+            user_info.entry_message = self.entry_message[recipient_nickname]        
+
+        if user_info.server_listening is None:
+            # si el sender no tiene un servidor tcp para recibir mensajes del recipient, hay que crearlo
+            port = get_free_port()
+            server = ServerTCP(f"server_of_{self.sender_nickname}_to_receive_messages_from_{recipient_nickname}", LOCAL_IP, port)
+            server.start()
+            time.sleep(1)
+            user_info.server_listening = server
+            user_info.check_incoming_messages = CheckIncomingMessages(server, self) # mando el chatroom para que pueda actualizar la interfaz
+
+            # si el recipient no tiene un cliente para escribirnos
+            # hay que decirle al recipient que cree uno
+            self.send_request_to_create_tcp_client(recipient_nickname, port)
+
+        if user_info.client is None:
+            # si el recipient no tiene un servidor tcp para recibir mensajes del sender
+            # hay que decirle al recipient que cree uno
+            self.send_request_to_create_tcp_server(recipient_nickname)
+            time.sleep(1)
 
 
+
+        self.chat_windows[recipient_nickname].show()
 
     def send_message_item(self, recipient_nickname: str):
         """ Envía un mensaje y lo muestra en el área de mensajes. """
@@ -626,7 +632,6 @@ class IncomingMessageOrchestrator:
         if action == "CREATE_TCP_SERVER":
             recipient_nickname = arguments[0]
             if recipient_nickname == MY_NICKNAME:
-
                 MY_CHATROOM.open_chat_in_recipient_side(recipient_nickname=sender_nickname, sender_nickname=recipient_nickname)
             return
 
