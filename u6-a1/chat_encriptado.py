@@ -289,6 +289,7 @@ class ChatroomWindows(QWidget):
         # si el recipient no tiene un servidor tcp para recibir mensajes del sender
         # hay que decirle al recipient que cree uno
         self.send_request_to_create_tcp_server(recipient_nickname)
+        time.sleep(1)
 
         # si el sender no tiene un servidor tcp para recibir mensajes del recipient, hay que crearlo
         port = get_free_port()
@@ -620,11 +621,12 @@ class IncomingMessageOrchestrator:
     
     def check_action(self, action, sender_nickname, arguments, is_master):
         global MY_NICKNAME, USER_INFO_BY_NICKNAME, MY_CHATROOM
-        print(f"[Recibido] {action} de {sender_nickname}")
+        print(f"[Recibido en {MY_NICKNAME}] {action} de {sender_nickname}")
 
         if action == "CREATE_TCP_SERVER":
             recipient_nickname = arguments[0]
             if recipient_nickname == MY_NICKNAME:
+
                 MY_CHATROOM.open_chat_in_recipient_side(recipient_nickname=sender_nickname, sender_nickname=recipient_nickname)
             return
 
