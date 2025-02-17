@@ -259,9 +259,12 @@ class ChatroomWindows(QWidget):
             user_info.server_listening = server
             user_info.check_incoming_messages = CheckIncomingMessages(server, self) # mando el chatroom para que pueda actualizar la interfaz
 
+            # esperar un segundo para que el server se inicie
+            time.sleep(1)
+
             # si el recipient no tiene un cliente para escribirnos
             # hay que decirle al recipient que cree uno
-            #self.send_request_to_create_tcp_client(recipient_nickname, port)
+            self.send_request_to_create_tcp_client(recipient_nickname, port)
 
     def create_window_group(self):
         # Crear una nueva ventana para el chat
