@@ -33,7 +33,7 @@ logging.basicConfig(
 
 logger = logging.getLogger("App principal")
 
-SHIFT = 3
+SHIFT = 30
 
 def caesar_encrypt(message: str, shift: int) -> str:
     result = ""
