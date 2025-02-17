@@ -232,10 +232,11 @@ class ChatroomWindows(QWidget):
             self.send_request_to_create_tcp_client(recipient_nickname, port)
 
                
-        #if user_info.client is None:
-            # si el recipient no tiene un servidor tcp para recibir mensajes del sender
-            # hay que decirle al recipient que cree uno
-        print(f"{recipient_nickname} necesito que crees un server para que escuches mis mensajes")
+            if user_info.client is None:
+                # si el recipient no tiene un servidor tcp para recibir mensajes del sender
+                # hay que decirle al recipient que cree uno
+                self.send_request_to_create_tcp_server(recipient_nickname)
+            print(f"{recipient_nickname} necesito que crees un server para que escuches mis mensajes")
         #self.send_request_to_create_tcp_server(recipient_nickname)
         #    time.sleep(1)
 
@@ -317,8 +318,8 @@ class ChatroomWindows(QWidget):
             user_info.entry_message = self.entry_message[recipient_nickname]        
 
             self.chat_windows[recipient_nickname].show()
-        print(f"Chat con {recipient_nickname} creado.")
-        
+            print(f"Chat con {recipient_nickname} creado.")
+
     def send_message_item(self, recipient_nickname: str):
         """ Envía un mensaje y lo muestra en el área de mensajes. """
         message = self.entry_message[recipient_nickname].text()
