@@ -231,16 +231,15 @@ class ChatroomWindows(QWidget):
 
             # si el recipient no tiene un cliente para escribirnos
             # hay que decirle al recipient que cree uno
-            self.send_request_to_create_tcp_client(recipient_nickname, port)
+            #self.send_request_to_create_tcp_client(recipient_nickname, port)
 
                
-            if user_info.client is None:
+            #if user_info.client is None:
                 # si el recipient no tiene un servidor tcp para recibir mensajes del sender
                 # hay que decirle al recipient que cree uno
-                self.send_request_to_create_tcp_server(recipient_nickname)
-            print(f"{recipient_nickname} necesito que crees un server para que escuches mis mensajes")
-        #self.send_request_to_create_tcp_server(recipient_nickname)
-        #    time.sleep(1)
+            #    self.send_request_to_create_tcp_server(recipient_nickname)
+            #print(f"{recipient_nickname} necesito que crees un server para que escuches mis mensajes")
+
 
     def open_chat_in_recipient_side(self, recipient_nickname, sender_nickname = None):
         if sender_nickname is None:
