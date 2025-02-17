@@ -159,6 +159,8 @@ class ChatroomWindows(QWidget):
         self.chat_windows = {} # Diccionario para almacenar las ventanas de cada chat privado
         self.text_box = {} # Diccionario para almacenar los QTextEdit de cada chat privado
         self.entry_message = {} # Diccionario para almacenar los QLineEdit de cada chat privado
+        self.check_workers = {} # Diccionario para almacenar los workers de cada chat privado
+        self.check_threads = {} # Diccionario para almacenar los threads de cada chat privado
 
         self.setWindowTitle(f"Chatroom de {self.sender_nickname}")
         self.setGeometry(100, 100, 300, 300)
@@ -196,6 +198,17 @@ class ChatroomWindows(QWidget):
         self.timer.timeout.connect(self.update_user_list)
         self.timer.start(1000)
 
+
+    def update_private_chat(self, mensaje):
+        # Aquí actualizamos la interfaz de forma segura en el hilo principal
+        # Asegúrate de usar la clave correcta, por ejemplo, el nickname del destinatario
+        sender_nickname, mensaje = mensaje.split(":")
+        print(f"**** Mensaje recibido de {sender_nickname}: {mensaje}")
+        if sender_nickname in self.text_box:
+            self.text_box[sender_nickname].append(f"{sender_nickname}: {mensaje}")
+        else:
+            print("No se encontró la clave en text_box")
+
     def update_user_list(self):
         """ Actualiza la lista de usuarios conectados. """
         if len(USER_INFO_BY_NICKNAME) == 0:
@@ -225,7 +238,12 @@ class ChatroomWindows(QWidget):
             server.start()
             
             user_info.server_listening = server
-            user_info.check_incoming_messages = CheckIncomingMessages(server, self, recipient_nickname) # mando el chatroom para que pueda actualizar la interfaz
+            self.check_workers[recipient_nickname] = CheckIncomingMessagesWorker(server, recipient_nickname)
+            self.check_threads[recipient_nickname] = QThread()
+            self.check_workers[recipient_nickname].moveToThread(self.check_threads[recipient_nickname])
+            self.check_workers[recipient_nickname].messageReceived.connect(self.update_private_chat)
+            self.check_threads[recipient_nickname].started.connect(self.check_workers[recipient_nickname].process)
+            self.check_threads[recipient_nickname].start()
 
             # si el recipient no tiene un cliente para escribirnos
             # hay que decirle al recipient que cree uno
@@ -257,7 +275,14 @@ class ChatroomWindows(QWidget):
             server.start()
             
             user_info.server_listening = server
-            user_info.check_incoming_messages = CheckIncomingMessages(server, self, recipient_nickname) # mando el chatroom para que pueda actualizar la interfaz
+
+            #user_info.check_incoming_messages = CheckIncomingMessagesWorker(server, recipient_nickname)
+            self.check_workers[recipient_nickname] = CheckIncomingMessagesWorker(server, recipient_nickname)
+            self.check_threads[recipient_nickname] = QThread()
+            self.check_workers[recipient_nickname].moveToThread(self.check_threads[recipient_nickname])
+            self.check_workers[recipient_nickname].messageReceived.connect(self.update_private_chat)
+            self.check_threads[recipient_nickname].started.connect(self.check_workers[recipient_nickname].process)
+            self.check_threads[recipient_nickname].start()
 
             # esperar un segundo para que el server se inicie
             time.sleep(1)
@@ -418,36 +443,29 @@ class ChatroomWindows(QWidget):
         font.setPointSize(size)
         return font
 
-class CheckIncomingMessages:
-    def __init__(self, server: ServerTCP, chatroom: ChatroomWindows, sender_nickname: str):
+class CheckIncomingMessagesWorker(QObject):
+    messageReceived = pyqtSignal(str)  # Emitirá el mensaje recibido
+
+    def __init__(self, server, sender_nickname):
+        super().__init__()
         self.server = server
-        self.chatroom = chatroom
         self.sender_nickname = sender_nickname
-        self.timer = QTimer(self.chatroom)
-        self.timer.timeout.connect(self.check_incoming_messages)
-        self.timer.start(100)
+        self.running = True
 
-    def check_incoming_messages(self):
-        try:
-            mensaje, address = self.server.incoming_queue.get_nowait()
+    def process(self):
+        while self.running:
+            try:
+                mensaje, address = self.server.incoming_queue.get(timeout=0.1)
+                # Emitir el mensaje recibido para actualizar la GUI en el hilo principal
+                self.messageReceived.emit(f"{self.sender_nickname}:{mensaje}")
+            except queue.Empty:
+                continue
+            except Exception as e:
+                logger.error(f"Error en worker: {e}")
+                break
 
-            print(f"Mensaje recibido de {address}: {mensaje}")
-            print(f"Lo envió {self.sender_nickname}")
-            print(f"Lo recibe {self.chatroom.sender_nickname}")
-
-            if self.sender_nickname in self.chatroom.text_box:
-                print(f"Clave {self.sender_nickname} encontrada en text_box")
-                #self.chatroom.text_box[self.sender_nickname].append(f"{self.sender_nickname}: {mensaje}")
-            else:
-                print("Error: clave", self.sender_nickname, "no encontrada en text_box")
-
-            #self.chatroom.text_box[self.sender_nickname].append(f"{self.sender_nickname}: {mensaje}")
-
-        except queue.Empty:
-            # Si no hay mensajes en la cola, continuar
-            pass
-        except Exception as e:
-            logger.error(f"Error al procesar mensaje: {e}")
+    def stop(self):
+        self.running = False
 
 class NicknameWindow(QMainWindow):
     """ Ventana secundaria para ingresar el nickname. """
