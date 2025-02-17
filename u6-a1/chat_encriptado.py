@@ -230,7 +230,7 @@ class ChatroomWindows(QWidget):
 
             # si el recipient no tiene un cliente para escribirnos
             # hay que decirle al recipient que cree uno
-            #self.send_request_to_create_tcp_client(recipient_nickname, port)
+            self.send_request_to_create_tcp_client(recipient_nickname, port)
 
                
             #if user_info.client is None:
