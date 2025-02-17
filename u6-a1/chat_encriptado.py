@@ -610,7 +610,8 @@ class IncomingMessageOrchestrator:
     entrantes en el atributo incoming_messages_queue de un nodo multicast.
     """
     def __init__(self, node: MulticastNode, is_master: bool):
-        process_incoming_thread = threading.Thread(
+        self.stop_event = multiprocessing.Event() # Bandera para detener el proceso
+        process_incoming_thread = multiprocessing.Process(
             target=self.process,
             args=(node, is_master),
             daemon=True
@@ -674,6 +675,10 @@ class IncomingMessageOrchestrator:
                 USER_INFO_BY_NICKNAME[sender_nickname] = UserInfo(sender_nickname)
                 MY_CHATROOM.update_user_list()
             return
+        
+    def stop(self):
+        self.stop_event.set()
+        
 
 def main():
     global MULTICAST_NODE, MY_MULTICAST_PORT
