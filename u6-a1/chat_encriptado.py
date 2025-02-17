@@ -643,11 +643,12 @@ class IncomingMessageOrchestrator:
             if MY_NICKNAME != sender_nickname:
                 USER_INFO_BY_NICKNAME[sender_nickname] = UserInfo(sender_nickname)
                 MY_CHATROOM.update_user_list()
-                MY_CHATROOM.send_my_info_to_new_user(sender_nickname)
+                MY_CHATROOM.send_my_info_to_new_user(MY_NICKNAME)
             return
         
         if action == "UPDATE_USER_LIST":
-            if sender_nickname != MY_NICKNAME and sender_nickname not in USER_INFO_BY_NICKNAME.keys():
+
+            if sender_nickname != MY_NICKNAME and sender_nickname not in USER_INFO_BY_NICKNAME:
                 USER_INFO_BY_NICKNAME[sender_nickname] = UserInfo(sender_nickname)
                 MY_CHATROOM.update_user_list()
             return
