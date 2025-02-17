@@ -288,6 +288,7 @@ class ChatroomWindows(QWidget):
             user_info.visual_chat = self.text_box[recipient_nickname]
             user_info.entry_message = self.entry_message[recipient_nickname]        
 
+        # CREAR SERVIDOR PARA RECIBIR MENSAJES DE LA PERSONA CON LA QUE QUIERO CHATEAR
         if user_info.server_listening is None:
             # si el sender no tiene un servidor tcp para recibir mensajes del recipient, hay que crearlo
             port = get_free_port()
@@ -640,8 +641,11 @@ class IncomingMessageOrchestrator:
             if recipient_nickname == MY_NICKNAME:
                 sender_ip = arguments[1]
                 sender_port = int(arguments[2])
-                user_info = USER_INFO_BY_NICKNAME[sender_nickname]
-                if user_info.client is None:
+                user_info = USER_INFO_BY_NICKNAME.get(sender_nickname)
+                if not user_info:
+                    USER_INFO_BY_NICKNAME[sender_nickname] = UserInfo(sender_nickname)
+                    user_info = USER_INFO_BY_NICKNAME[sender_nickname]
+                if user_info.client is None: # tengo un cliente para escribirle a sender???
                     client_socket = ClientTCP(f"client_of_{recipient_nickname}_to_send_messages_to_{sender_nickname}", sender_ip, sender_port)
                     user_info.client = client_socket # lo usaremos para enviar mensajes al sender
             return
