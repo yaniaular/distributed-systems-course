@@ -316,8 +316,9 @@ class ChatroomWindows(QWidget):
             user_info.visual_chat = self.text_box[recipient_nickname]
             user_info.entry_message = self.entry_message[recipient_nickname]        
 
-        self.chat_windows[recipient_nickname].show()
-
+            self.chat_windows[recipient_nickname].show()
+        print(f"Chat con {recipient_nickname} creado.")
+        
     def send_message_item(self, recipient_nickname: str):
         """ Envía un mensaje y lo muestra en el área de mensajes. """
         message = self.entry_message[recipient_nickname].text()
