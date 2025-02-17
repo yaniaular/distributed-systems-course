@@ -415,7 +415,8 @@ class CheckIncomingMessages:
             # que recibió (el recipient).
             # TODO: esto debe cambiar a enviar un mensaje al orchestrator
             # ya que ahorita actualiza la interfaz gráfica directamente
-            self.chatroom.text_box[sender_nickname].append(f"{sender_nickname}: {mensaje}")
+            #self.chatroom.text_box[sender_nickname].append(f"{sender_nickname}: {mensaje}")
+            
         except queue.Empty:
             # Si no hay mensajes en la cola, continuar
             pass
