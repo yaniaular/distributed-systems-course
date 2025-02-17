@@ -20,7 +20,6 @@ from PyQt5.QtWidgets import (
 USER_INFO_BY_NICKNAME = {} # información de los usuarios conectados
 MAPPER_ADDR_TO_NICKNAME = {}
 
-LOCAL_IP = "127.0.0.1"
 AVAILABLE_PORTS = [30000, 30001, 30002, 30003, 30004, 30005, 30006, 30007, 30008, 30009]
 
 # Para enviar mensajes a todos los nodos conectados al grupo multicast
@@ -223,7 +222,7 @@ class ChatroomWindows(QWidget):
             print(f"creando server para recibir mensajes de {recipient_nickname}")
             # si el sender no tiene un servidor tcp para recibir mensajes del recipient, hay que crearlo
             port = get_free_port()
-            server = ServerTCP(f"server_of_{self.sender_nickname}_to_receive_messages_from_{recipient_nickname}", LOCAL_IP, port)
+            server = ServerTCP(f"server_of_{self.sender_nickname}_to_receive_messages_from_{recipient_nickname}", get_ip_local(), port)
             server.start()
             time.sleep(1)
             user_info.server_listening = server
