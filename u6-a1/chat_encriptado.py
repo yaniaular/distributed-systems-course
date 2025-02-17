@@ -16,11 +16,11 @@ from PyQt5.QtWidgets import (
     QLabel, QLineEdit, QTextEdit, QHBoxLayout, QListWidget, QListWidgetItem
 )
 
-USER_INFO_BY_NICKNAME = {}
+USER_INFO_BY_NICKNAME = {} # información de los usuarios conectados
 MAPPER_ADDR_TO_NICKNAME = {}
 
 LOCAL_IP = "127.0.0.1"
-AVAILABLE_PORTS = set(range(20001, 20011))
+AVAILABLE_PORTS = [30000, 30001, 30002, 30003, 30004, 30005, 30006, 30007, 30008, 30009]
 
 # Para enviar mensajes a todos los nodos conectados al grupo multicast
 MULTICAST_NODE = None
@@ -43,17 +43,38 @@ def get_chatroom_by_nickname(nickname: str) -> Optional["ChatroomWindows"]:
     """ Retorna la ventana de chat asociada al nickname. """
     return USER_INFO_BY_NICKNAME.get(nickname).chatroom_window
 
+def get_ip_local():
+    """Devuelve la IP local principal (por la que saldrían los paquetes a internet)."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        # Conectamos a un destino público (sin enviar datos)
+        s.connect(("8.8.8.8", 80))
+        ip_local = s.getsockname()[0]
+    except Exception:
+        ip_local = "127.0.0.1"
+    finally:
+        s.close()
+    return ip_local
+
+def get_free_port():
+    return AVAILABLE_PORTS.pop(0)
+
+MY_MULTICAST_PORT = None
+MY_NICKNAME = None
+MY_IP = get_ip_local()
+
 class ServerTCP:
 
     def __init__(self,
                  name: str,
                  ip: str,
+                 port: int,
                  buffer_size: Optional[int] = 1024,
                  maximum_connections: Optional[int] = 10):
         logger.info("Configurando servidor...")
         self.name = name
         self.ip = ip
-        self.port = self.get_free_port()
+        self.port = port
         print(f"[{self.name}]: Usando IP: {self.ip} - Usando puerto: {self.port}")
         self.incoming_queue = multiprocessing.Queue()
         self.address = (ip, self.port)
@@ -72,11 +93,6 @@ class ServerTCP:
     def start(self):
         logger.info("Starting servidor ...")
         self.server_thread.start()
-
-    def get_free_port(self):
-        if not AVAILABLE_PORTS:
-            raise RuntimeError("No hay puertos disponibles")
-        return AVAILABLE_PORTS.pop()
 
     @staticmethod
     def server_process(incoming_queue, address, buffer_size, maximum_connections):
@@ -110,7 +126,6 @@ class ServerTCP:
                 logger.warning("El proceso no terminó correctamente. Forzando terminación...")
                 self.server_thread.terminate()  # Forzar la terminación si no responde
             self.server_thread.join()  # Esperar a que el proceso termine completamente
-            AVAILABLE_PORTS.add(self.port)  # Devolver el puerto al conjunto
 
     def __del__(self):
         self.terminate()
@@ -139,9 +154,10 @@ class ChatroomWindows(QWidget):
         super().__init__()
 
         self.sender_nickname = nickname
-        self.chat_windows = {} # Diccionario para almacenar las ventanas de chat que tiene abiertas el sender
-        self.text_box = {} # Diccionario para almacenar los QTextEdit de cada chat
-        self.entry_message = {} # Diccionario para almacenar los QLineEdit de cada chat
+
+        self.chat_windows = {} # Diccionario para almacenar las ventanas de cada chat privado
+        self.text_box = {} # Diccionario para almacenar los QTextEdit de cada chat privado
+        self.entry_message = {} # Diccionario para almacenar los QLineEdit de cada chat privado
 
         self.setWindowTitle(f"Chatroom de {self.sender_nickname}")
         self.setGeometry(100, 100, 300, 300)
@@ -181,9 +197,8 @@ class ChatroomWindows(QWidget):
 
     def update_user_list(self):
         """ Actualiza la lista de usuarios conectados. """
-        if len(USER_INFO_BY_NICKNAME) <= 1:
+        if len(USER_INFO_BY_NICKNAME) == 0:
             return
-
         self.list_users.clear()  # Limpiar la lista actual
         for recipient_nickname in USER_INFO_BY_NICKNAME.keys():
             if self.sender_nickname == recipient_nickname:
@@ -222,24 +237,17 @@ class ChatroomWindows(QWidget):
 
         # Botón para enviar mensajes
         send_button = QPushButton('Enviar')
-        send_button.clicked.connect(self.send_message_group)
+        send_button.clicked.connect(self.send_message_orchestrator)
         self.group_layout.addWidget(send_button)
         self.group_chat.show()
-
-    def send_message_group(self):
-        # TODO: implementar lógica para cada acción
-        message = self.chat_input.text()
-        if message:
-            self.chat_input.clear()
-            action = "ACTION"
-            MULTICAST_NODE.send(f"{action}:{self.sender_nickname}:{message}")
 
     def create_window_chat(self, recipient_nickname: str, sender_nickname: Optional[str] = None):
         if sender_nickname is None:
             sender_nickname = self.sender_nickname
+        # TODO: guardar chat_windows, text_box y entry_message en USER_INFO_BY_NICKNAME
 
         # Crear una nueva ventana para el chat
-        self.chat_windows[recipient_nickname] = QMainWindow()
+        self.chat_windows[recipient_nickname] = QMainWindow() 
         self.chat_windows[recipient_nickname].setWindowTitle(
             f"[{sender_nickname}] Chat con {recipient_nickname}")
         self.chat_windows[recipient_nickname].setGeometry(100, 100, 400, 500)
@@ -271,6 +279,30 @@ class ChatroomWindows(QWidget):
         layout.addWidget(frame_entrada)
         self.chat_windows[recipient_nickname].show()
 
+        # TODO: Esto deberia ir en un metodo separado
+        user_info = USER_INFO_BY_NICKNAME.get(recipient_nickname, False)
+        user_info.private_chat = self.chat_windows[recipient_nickname]
+        user_info.visual_chat = self.text_box[recipient_nickname]
+        user_info.entry_message = self.entry_message[recipient_nickname]
+
+        # si el recipient no tiene un servidor tcp para recibir mensajes del sender
+        # hay que decirle al recipient que cree uno
+        self.send_request_to_create_tcp_server(recipient_nickname)
+
+        # si el sender no tiene un servidor tcp para recibir mensajes del recipient, hay que crearlo
+        port = get_free_port()
+        server = ServerTCP(f"server_of_{self.sender_nickname}_to_receive_messages_from_{recipient_nickname}", LOCAL_IP, port)
+        server.start()
+        time.sleep(1)
+        user_info.server_listening = server
+        user_info.check_incoming_messages = CheckIncomingMessages(server, self) # mando el chatroom para que pueda actualizar la interfaz
+
+        # si el recipient no tiene un cliente para escribirnos
+        # hay que decirle al recipient que cree uno
+        self.send_request_to_create_tcp_client(recipient_nickname, port)
+
+
+
     def send_message_item(self, recipient_nickname: str):
         """ Envía un mensaje y lo muestra en el área de mensajes. """
         message = self.entry_message[recipient_nickname].text()
@@ -283,44 +315,54 @@ class ChatroomWindows(QWidget):
             sender_user_info = USER_INFO_BY_NICKNAME[self.sender_nickname] #yani
             recipient_user_info = USER_INFO_BY_NICKNAME[recipient_nickname] #paco
 
-            chatroom_recipient = None
-            if self.sender_nickname not in recipient_user_info.tcp_servers: # si el recipient no tiene un servidor tcp para recibir mensajes del sender, hay que crearlo
-                # TODO: mandar mensaje al orchestrator para que se cree el servidor del lado del recipient
-                server = ServerTCP(f"server_of_{recipient_nickname}_to_receive_messages_from_{self.sender_nickname}", LOCAL_IP)
-                server.start()
-                recipient_user_info.tcp_servers[self.sender_nickname] = server
-                time.sleep(1)
-                chatroom_recipient = get_chatroom_by_nickname(recipient_nickname)
-                chatroom_recipient.open_chat_in_recipient_side(recipient_nickname=self.sender_nickname,sender_nickname=recipient_nickname)
-                recipient_user_info.check_incoming_messages_from[self.sender_nickname] = CheckIncomingMessages(server, chatroom_recipient)
-
-            if recipient_nickname not in sender_user_info.tcp_servers: # si el sender no tiene un servidor para recibir mensajes del recipient, hay que crearlo
-                server = ServerTCP(f"server_of_{self.sender_nickname}_to_receive_messages_from_{recipient_nickname}", LOCAL_IP)
-                server.start()
-                sender_user_info.tcp_servers[recipient_nickname] = server
-                time.sleep(1)
-                sender_user_info.check_incoming_messages_from[recipient_nickname] = CheckIncomingMessages(server, self)
-
-            if recipient_nickname not in sender_user_info.tcp_clients: # si el sender no tiene creado un cliente para escribirle al recipient, hay que crearlo
-                recipient_user_server_for_sender = recipient_user_info.tcp_servers[self.sender_nickname]
-                client_socket = ClientTCP(f"client_of_{self.sender_nickname}_to_send_messages_to_{recipient_nickname}", recipient_user_server_for_sender.ip, recipient_user_server_for_sender.port)
-                time.sleep(1)
-                sender_user_info.tcp_clients[recipient_nickname] = client_socket
-                MAPPER_ADDR_TO_NICKNAME[client_socket.client_socket.getsockname()] = self.sender_nickname
-
-            if self.sender_nickname not in recipient_user_info.tcp_clients: # si el recipient no tiene creado un cliente para escribirle al sender, hay que crearlo
-                # TODO: mandar mensaje al orchestrator para que se cree el cliente del lado del recipient
-                sender_user_server_for_recipient = sender_user_info.tcp_servers[recipient_nickname]
-                client_socket = ClientTCP(f"client_of_{recipient_nickname}_to_send_messages_to_{self.sender_nickname}", sender_user_server_for_recipient.ip, sender_user_server_for_recipient.port)
-                time.sleep(1)
-                recipient_user_info.tcp_clients[self.sender_nickname] = client_socket
-
-                if chatroom_recipient is not None:
-                    MAPPER_ADDR_TO_NICKNAME[client_socket.client_socket.getsockname()] = recipient_nickname
-
             client_socket = sender_user_info.tcp_clients[recipient_nickname]
             data = client_socket.send_message(message)
             print('Servidor: ' + data)
+
+    def send_request_to_create_tcp_server(self, recipient_nickname):
+        """ This method send a request to create a tcp server in the recipient side
+        """
+        action = "CREATE_TCP_SERVER"
+        sender = self.sender_nickname
+        recipient = recipient_nickname
+        message = f"{action}:{sender}:{recipient}"
+        self.send_message_orchestrator(message)
+
+    def send_request_to_create_tcp_client(self, recipient_nickname, port):
+        """ This method send a request to create a tcp client in the recipient side
+        """
+        action = "CREATE_TCP_CLIENT"
+        sender = self.sender_nickname
+        recipient = recipient_nickname
+        sender_ip = MY_IP
+        sender_port = port
+        message = f"{action}:{sender}:{recipient}:{sender_ip}:{sender_port}"
+        self.send_message_orchestrator(message)
+
+    def send_request_to_join_chatroom(self):
+        action = "JOIN_CHATROOM"
+        sender = self.sender_nickname
+        message = f"{action}:{sender}"
+        self.send_message_orchestrator(message)
+
+    def send_message_to_group(self):
+        content = self.chat_input.text()
+        if not content:
+            return
+        self.chat_input.clear()
+        action = "SEND_GROUP_MESSAGE"
+        sender = self.sender_nickname
+        message = f"{action}:{sender}:{content}"
+        self.send_message_orchestrator(message)
+
+    def send_my_info_to_new_user(self, recipient_nickname):
+        action = "UPDATE_USER_LIST"
+        sender = self.sender_nickname
+        message = f"{action}:{sender}"
+        self.send_message_orchestrator(message)
+
+    def send_message_orchestrator(self, message):
+        MULTICAST_NODE.send(message)
 
     def get_font(self, size):
         """ Retorna una fuente con el tamaño especificado. """
@@ -329,10 +371,9 @@ class ChatroomWindows(QWidget):
         return font
 
 class CheckIncomingMessages:
-    def __init__(self, server: ServerTCP, chatroom: ChatroomWindows, chat_type: str = "private"):
+    def __init__(self, server: ServerTCP, chatroom: ChatroomWindows):
         self.server = server
         self.chatroom = chatroom
-        self.chat_type = chat_type
         self.timer = QTimer(self.chatroom)
         self.timer.timeout.connect(self.check_incoming_messages)
         self.timer.start(100)
@@ -340,24 +381,25 @@ class CheckIncomingMessages:
     def check_incoming_messages(self):
         try:
             mensaje, address = self.server.incoming_queue.get_nowait()
-            if self.chat_type == "private": # TODO siempre es privado, antes se usaba para difusion
-                # Obtener el chatroom de la persona que le envió el mensaje a este self.server
-                # esto es para obtener el nickname después
-                chat_window = get_chatroom_by_address(address)
-                print(chat_window)
-                
-                # Nickname de la persona que le envió el mensaje a este self.server
-                sender_nickname = chat_window.sender_nickname
 
-                print(f"Mensaje recibido de {address}: {mensaje}")
-                print(f"sender_nickname {sender_nickname}")
-                print(f"recipient_nickname {self.chatroom.sender_nickname}")
 
-                # El mensaje recibido debe mostrarse en la ventana de chat del
-                # que recibió (el recipient).
-                # TODO: esto debe cambiar a enviar un mensaje al orchestrator
-                # ya que ahorita actualiza la interfaz gráfica directamente
-                self.chatroom.text_box[sender_nickname].append(f"{sender_nickname}: {mensaje}")
+            # Obtener el chatroom de la persona que le envió el mensaje a este self.server
+            # esto es para obtener el nickname después
+            chat_window = get_chatroom_by_address(address)
+            print(chat_window)
+            
+            # Nickname de la persona que le envió el mensaje a este self.server
+            sender_nickname = chat_window.sender_nickname
+
+            print(f"Mensaje recibido de {address}: {mensaje}")
+            print(f"sender_nickname {sender_nickname}")
+            print(f"recipient_nickname {self.chatroom.sender_nickname}")
+
+            # El mensaje recibido debe mostrarse en la ventana de chat del
+            # que recibió (el recipient).
+            # TODO: esto debe cambiar a enviar un mensaje al orchestrator
+            # ya que ahorita actualiza la interfaz gráfica directamente
+            self.chatroom.text_box[sender_nickname].append(f"{sender_nickname}: {mensaje}")
         except queue.Empty:
             # Si no hay mensajes en la cola, continuar
             pass
@@ -386,6 +428,7 @@ class NicknameWindow(QMainWindow):
         layout.addWidget(self.btn_confirm)
 
     def confirm_nickname(self):
+        global MY_NICKNAME, MY_CHATROOM
         nickname = self.txt_nickname.text().strip()
         if not nickname:
             QMessageBox.warning(self, "Advertencia", "Por favor, ingresa un nickname.")
@@ -401,7 +444,9 @@ class NicknameWindow(QMainWindow):
         self.chatroom_windows = ChatroomWindows(nickname)
         self.chatroom_windows.show()
         self.chatroom_windows.update()
-        USER_INFO_BY_NICKNAME[nickname] = UserInfo(nickname, self.chatroom_windows)
+        MY_CHATROOM = self.chatroom_windows
+        MY_NICKNAME = nickname
+        MY_CHATROOM.send_request_to_join_chatroom()
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -449,17 +494,14 @@ class MainWindow(QMainWindow):
             print(nickname, user_info.chatroom_window)
 
 class UserInfo:
-    def __init__(self, nickname: str, chatroom_window: ChatroomWindows):
+    def __init__(self, nickname: str):
         self.nickname = nickname
-        # El chatroom_window es la ventana principal de la persona
-        # aqui puede ver la lista de usuario conectados y abrir ventanas de chat
-        # internamente almacena los items a nivel interfaz para poder
-        # actualizar la lista de usuarios conectados
-        # abrir ventanas de chat y enviar mensajes
-        self.chatroom_window = chatroom_window
-        self.tcp_clients = {}
-        self.tcp_servers = {}
-        self.check_incoming_messages_from = {}
+        self.server_listening = None # servidor tcp para recibir mensajes de este usuario
+        self.check_incoming_messages = None # hilo para revisar mensajes que esten en la cola
+        self.client = None # cliente tcp para enviar mensajes a este usuario
+        self.private_chat = None # ventana de chat privado con este usuario es de tipo QMainWindow
+        self.visual_chat = None # es el area donde se ven los mensajes en la ventana de chat privado con este usuario
+        self.entry_message = None # es el area para escribir mis mensajes en la ventana de chat privado con este usuario
 
 class MulticastNode:
     """ Esta clase se encarga de crear un nodo el cual creará una conexión multicast 
@@ -568,25 +610,55 @@ class IncomingMessageOrchestrator:
                     arguments = msg.split(":")
                     action = arguments[0]
                     sender_nickname = arguments[1]
-                    self.check_action(action, sender_nickname, is_master)
+                    self.check_action(action, sender_nickname, arguments[2:], is_master)
             except queue.Empty:
                 pass
             except Exception as e:
                 print(f"[ERROR] {e}")
                 break
     
-    def check_action(self, action, sender_nickname, is_master):
-        # TODO: implementar lógica para procesar mensajes
-        pass
+    def check_action(self, action, sender_nickname, arguments, is_master):
+        global MY_NICKNAME, USER_INFO_BY_NICKNAME, MY_CHATROOM
+        print(f"[Recibido] {action} de {sender_nickname}")
+
+        if action == "CREATE_TCP_SERVER":
+            recipient_nickname = arguments[0]
+            if recipient_nickname == MY_NICKNAME:
+                MY_CHATROOM.open_chat_in_recipient_side(recipient_nickname=sender_nickname, sender_nickname=recipient_nickname)
+            return
+
+        if action == "CREATE_TCP_CLIENT":
+            recipient_nickname = arguments[0]
+            if recipient_nickname == MY_NICKNAME:
+                sender_ip = arguments[1]
+                sender_port = int(arguments[2])
+                user_info = USER_INFO_BY_NICKNAME[sender_nickname]
+                if user_info.client is None:
+                    client_socket = ClientTCP(f"client_of_{recipient_nickname}_to_send_messages_to_{sender_nickname}", sender_ip, sender_port)
+                    user_info.client = client_socket # lo usaremos para enviar mensajes al sender
+            return
+
+        if action == "JOIN_CHATROOM":
+            if MY_NICKNAME != sender_nickname:
+                USER_INFO_BY_NICKNAME[sender_nickname] = UserInfo(sender_nickname)
+                MY_CHATROOM.update_user_list()
+                MY_CHATROOM.send_my_info_to_new_user(sender_nickname)
+            return
+        
+        if action == "UPDATE_USER_LIST":
+            if sender_nickname != MY_NICKNAME and sender_nickname not in USER_INFO_BY_NICKNAME.keys():
+                USER_INFO_BY_NICKNAME[sender_nickname] = UserInfo(sender_nickname)
+                MY_CHATROOM.update_user_list()
+            return
 
 def main():
-    global MULTICAST_NODE
+    global MULTICAST_NODE, MY_MULTICAST_PORT
     # Conectarse a un servidor multicast para comunicación interna o técnica entre nodos.
     # Esto actuará como orquestador de mensajes entre los nodos.
     ip_multicast = "224.0.0.0"
-    port_multicast = 30001
     is_master = True if len(sys.argv) > 1 and sys.argv[1] == "master" else False
-    MULTICAST_NODE = MulticastNode(ip_multicast, port_multicast)
+    MY_MULTICAST_PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 30001
+    MULTICAST_NODE = MulticastNode(ip_multicast, MY_MULTICAST_PORT)
     IncomingMessageOrchestrator(MULTICAST_NODE, is_master)
 
     app = QApplication(sys.argv)
