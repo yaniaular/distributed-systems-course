@@ -492,10 +492,13 @@ class MainWindow(QMainWindow):
     def close_all(self):
         """ Cierra todos los servidores, clientes y ventanas. """
         for nickname, userinfo in USER_INFO_BY_NICKNAME.items():
-            userinfo.server_listening.terminate()
-            userinfo.check_incoming_messages.timer.stop()
-            userinfo.check_incoming_messages.timer.deleteLater()
-            userinfo.client.close()
+            if userinfo.server_listening:
+                userinfo.server_listening.terminate()
+            if userinfo.check_incoming_messages:
+                userinfo.check_incoming_messages.timer.stop()
+                userinfo.check_incoming_messages.timer.deleteLater()
+            if userinfo.client:
+                userinfo.client.close()
         self.close()
 
     def ask_nickname_window(self):
