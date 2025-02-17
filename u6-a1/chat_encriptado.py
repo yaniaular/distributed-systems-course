@@ -8,6 +8,7 @@ import struct
 import errno
 import os
 import threading
+import platform
 from typing import Optional, Dict
 from PyQt5.QtCore import QTimer, Qt
 from PyQt5.QtGui import QFont
@@ -526,7 +527,7 @@ class MulticastNode:
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
-        operative_system = os.uname().sysname
+        operative_system = platform.uname().system
         if operative_system != "Windows":
             self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
         
