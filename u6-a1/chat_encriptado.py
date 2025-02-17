@@ -330,7 +330,14 @@ class ChatroomWindows(QWidget):
             recipient_user_info = USER_INFO_BY_NICKNAME[recipient_nickname] #paco
             print(f"USER_INFO_BY_NICKNAME {USER_INFO_BY_NICKNAME}")
             for nickname, user_info in USER_INFO_BY_NICKNAME.items():
-                print(f"nickname {nickname} user_info {user_info}")
+                print(f"nickname {nickname}")
+                print(f"user_info {user_info.client}")
+                print(f"user_info {user_info.server_listening}")
+                print(f"user_info {user_info.check_incoming_messages}")
+                print(f"user_info {user_info.private_chat}")
+                print(f"user_info {user_info.visual_chat}")
+                print(f"user_info {user_info.entry_message}")
+
             
             #client_socket = recipient_user_info.client
             #data = client_socket.send_message(message)
