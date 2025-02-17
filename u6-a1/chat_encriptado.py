@@ -211,6 +211,32 @@ class ChatroomWindows(QWidget):
         recipient_nickname = item.text()
         self.create_window_chat(recipient_nickname, self.sender_nickname)
 
+        user_info = USER_INFO_BY_NICKNAME.get(recipient_nickname, False)
+        if not user_info:
+            USER_INFO_BY_NICKNAME[recipient_nickname] = UserInfo(recipient_nickname)
+            user_info = USER_INFO_BY_NICKNAME[recipient_nickname]
+
+        # CREAR SERVIDOR PARA RECIBIR MENSAJES DE LA PERSONA CON LA QUE QUIERO CHATEAR
+        if user_info.server_listening is None:
+            # si el sender no tiene un servidor tcp para recibir mensajes del recipient, hay que crearlo
+            port = get_free_port()
+            server = ServerTCP(f"server_of_{self.sender_nickname}_to_receive_messages_from_{recipient_nickname}", LOCAL_IP, port)
+            server.start()
+            time.sleep(1)
+            user_info.server_listening = server
+            user_info.check_incoming_messages = CheckIncomingMessages(server, self) # mando el chatroom para que pueda actualizar la interfaz
+
+            # si el recipient no tiene un cliente para escribirnos
+            # hay que decirle al recipient que cree uno
+            self.send_request_to_create_tcp_client(recipient_nickname, port)
+
+               
+        #if user_info.client is None:
+            # si el recipient no tiene un servidor tcp para recibir mensajes del sender
+            # hay que decirle al recipient que cree uno
+        self.send_request_to_create_tcp_server(recipient_nickname)
+        #    time.sleep(1)
+
     def open_chat_in_recipient_side(self, recipient_nickname, sender_nickname = None):
         if sender_nickname is None:
             sender_nickname = self.sender_nickname
@@ -287,28 +313,6 @@ class ChatroomWindows(QWidget):
             user_info.private_chat = self.chat_windows[recipient_nickname]
             user_info.visual_chat = self.text_box[recipient_nickname]
             user_info.entry_message = self.entry_message[recipient_nickname]        
-
-        # CREAR SERVIDOR PARA RECIBIR MENSAJES DE LA PERSONA CON LA QUE QUIERO CHATEAR
-        if user_info.server_listening is None:
-            # si el sender no tiene un servidor tcp para recibir mensajes del recipient, hay que crearlo
-            port = get_free_port()
-            server = ServerTCP(f"server_of_{self.sender_nickname}_to_receive_messages_from_{recipient_nickname}", LOCAL_IP, port)
-            server.start()
-            time.sleep(1)
-            user_info.server_listening = server
-            user_info.check_incoming_messages = CheckIncomingMessages(server, self) # mando el chatroom para que pueda actualizar la interfaz
-
-            # si el recipient no tiene un cliente para escribirnos
-            # hay que decirle al recipient que cree uno
-            self.send_request_to_create_tcp_client(recipient_nickname, port)
-
-        if user_info.client is None:
-            # si el recipient no tiene un servidor tcp para recibir mensajes del sender
-            # hay que decirle al recipient que cree uno
-            self.send_request_to_create_tcp_server(recipient_nickname)
-            time.sleep(1)
-
-
 
         self.chat_windows[recipient_nickname].show()
 
@@ -633,6 +637,10 @@ class IncomingMessageOrchestrator:
         if action == "CREATE_TCP_SERVER":
             recipient_nickname = arguments[0]
             if recipient_nickname == MY_NICKNAME:
+                user_info = USER_INFO_BY_NICKNAME.get(sender_nickname)
+                if not user_info:
+                    USER_INFO_BY_NICKNAME[sender_nickname] = UserInfo(sender_nickname)
+                    user_info = USER_INFO_BY_NICKNAME[sender_nickname]
                 MY_CHATROOM.open_chat_in_recipient_side(recipient_nickname=sender_nickname, sender_nickname=recipient_nickname)
             return
 
