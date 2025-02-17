@@ -225,7 +225,7 @@ class ChatroomWindows(QWidget):
             server.start()
             
             user_info.server_listening = server
-            user_info.check_incoming_messages = CheckIncomingMessages(server, self) # mando el chatroom para que pueda actualizar la interfaz
+            user_info.check_incoming_messages = CheckIncomingMessages(server, self, recipient_nickname) # mando el chatroom para que pueda actualizar la interfaz
 
             # si el recipient no tiene un cliente para escribirnos
             # hay que decirle al recipient que cree uno
@@ -257,7 +257,7 @@ class ChatroomWindows(QWidget):
             server.start()
             
             user_info.server_listening = server
-            user_info.check_incoming_messages = CheckIncomingMessages(server, self) # mando el chatroom para que pueda actualizar la interfaz
+            user_info.check_incoming_messages = CheckIncomingMessages(server, self, recipient_nickname) # mando el chatroom para que pueda actualizar la interfaz
 
             # esperar un segundo para que el server se inicie
             time.sleep(1)
@@ -419,9 +419,10 @@ class ChatroomWindows(QWidget):
         return font
 
 class CheckIncomingMessages:
-    def __init__(self, server: ServerTCP, chatroom: ChatroomWindows):
+    def __init__(self, server: ServerTCP, chatroom: ChatroomWindows, sender_nickname: str):
         self.server = server
         self.chatroom = chatroom
+        self.sender_nickname = sender_nickname
         self.timer = QTimer(self.chatroom)
         self.timer.timeout.connect(self.check_incoming_messages)
         self.timer.start(100)
@@ -430,24 +431,11 @@ class CheckIncomingMessages:
         try:
             mensaje, address = self.server.incoming_queue.get_nowait()
 
-
-            # Obtener el chatroom de la persona que le envió el mensaje a este self.server
-            # esto es para obtener el nickname después
-            #chat_window = get_chatroom_by_address(address)
-            #print(chat_window)
-            
-            # Nickname de la persona que le envió el mensaje a este self.server
-            #sender_nickname = chat_window.sender_nickname
-
             print(f"Mensaje recibido de {address}: {mensaje}")
-            #print(f"sender_nickname {sender_nickname}")
-            print(f"recipient_nickname {self.chatroom.sender_nickname}")
+            print(f"Lo envió {self.sender_nickname}")
+            print(f"Lo recibe {self.chatroom.sender_nickname}")
 
-            # El mensaje recibido debe mostrarse en la ventana de chat del
-            # que recibió (el recipient).
-            # TODO: esto debe cambiar a enviar un mensaje al orchestrator
-            # ya que ahorita actualiza la interfaz gráfica directamente
-            #self.chatroom.text_box[sender_nickname].append(f"{sender_nickname}: {mensaje}")
+            #self.chatroom.text_box[self.sender_nickname].append(f"{self.sender_nickname}: {mensaje}")
 
         except queue.Empty:
             # Si no hay mensajes en la cola, continuar
