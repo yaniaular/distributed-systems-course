@@ -132,7 +132,8 @@ class ServerTCP:
                     incoming_queue.put((decrypted_msg, addr))
                     logger.info("Mensaje recibido de %s: %s", str(addr), str(decrypted_msg))
                     ack = "ACK"
-                    conn.send(ack.encode())
+                    ack_encrypted = caesar_encrypt(ack, SHIFT)
+                    conn.send(ack_encrypted.encode())
         except KeyboardInterrupt:
             logger.warning("\n[KeyboardInterrupt] Servidor cerrando conexión...")
         except Exception as e:
