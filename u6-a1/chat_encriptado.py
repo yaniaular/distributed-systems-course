@@ -10,7 +10,7 @@ import os
 import threading
 import platform
 from typing import Optional, Dict
-from PyQt5.QtCore import QTimer, Qt
+from PyQt5.QtCore import QTimer, Qt, QObject, pyqtSignal, QThread
 from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget, QMessageBox,
@@ -605,80 +605,72 @@ class MulticastNode:
         except Exception as e:
             print(f"[ERROR] {e}")
 
-class IncomingMessageOrchestrator:
+class IncomingMessageOrchestrator(QObject):
     """ Esta clase crea un hilo que se enacarga de procesar los mensajes
     entrantes en el atributo incoming_messages_queue de un nodo multicast.
     """
-    def __init__(self, node: MulticastNode, is_master: bool):
-        self.stop_event = multiprocessing.Event() # Bandera para detener el proceso
-        process_incoming_thread = multiprocessing.Process(
-            target=self.process,
-            args=(node, is_master),
-            daemon=True
-        )
-        process_incoming_thread.start()
+    messageReceived = pyqtSignal(str, str, list, bool)
+    
+    def __init__(self, node, is_master):
+        super().__init__()
+        self.node = node
+        self.is_master = is_master
+        self.running = True
 
-    def process(self, node, is_master):
-        while True:
+    def process(self):
+        # Este método se ejecutará en el QThread
+        while self.running:
             try:
-                msg, addr = node.incoming_messages_queue.get()
+                # Usamos un timeout para que el get() no bloquee indefinidamente
+                msg, addr = self.node.incoming_messages_queue.get(timeout=0.1)
                 if msg:
                     arguments = msg.split(":")
                     action = arguments[0]
                     sender_nickname = arguments[1]
-                    self.check_action(action, sender_nickname, arguments[2:], is_master)
+                    # Emitir la señal para que el hilo principal maneje la actualización de la GUI
+                    self.messageReceived.emit(action, sender_nickname, arguments[2:], self.is_master)
             except queue.Empty:
-                pass
+                continue
             except Exception as e:
                 print(f"[ERROR] {e}")
                 break
-    
-    def check_action(self, action, sender_nickname, arguments, is_master):
-        global MY_NICKNAME, USER_INFO_BY_NICKNAME, MY_CHATROOM
-        print(f"[Recibido en {MY_NICKNAME}] {action} de {sender_nickname}")
 
-        if action == "CREATE_TCP_SERVER":
-            recipient_nickname = arguments[0]
-            if recipient_nickname == MY_NICKNAME:
-                user_info = USER_INFO_BY_NICKNAME.get(sender_nickname)
-                if not user_info:
-                    USER_INFO_BY_NICKNAME[sender_nickname] = UserInfo(sender_nickname)
-                    user_info = USER_INFO_BY_NICKNAME[sender_nickname]
-                MY_CHATROOM.open_chat_in_recipient_side(recipient_nickname=sender_nickname, sender_nickname=recipient_nickname)
-            return
+def handle_incoming_message(action, sender_nickname, arguments, is_master):
+    global MY_NICKNAME, USER_INFO_BY_NICKNAME, MY_CHATROOM
+    print(f"[Recibido en {MY_NICKNAME}] {action} de {sender_nickname}")
 
-        if action == "CREATE_TCP_CLIENT":
-            recipient_nickname = arguments[0]
-            if recipient_nickname == MY_NICKNAME:
-                sender_ip = arguments[1]
-                sender_port = int(arguments[2])
-                user_info = USER_INFO_BY_NICKNAME.get(sender_nickname)
-                if not user_info:
-                    USER_INFO_BY_NICKNAME[sender_nickname] = UserInfo(sender_nickname)
-                    user_info = USER_INFO_BY_NICKNAME[sender_nickname]
-                if user_info.client is None: # tengo un cliente para escribirle a sender???
-                    print(f"Intentanto crear cliente para enviar mensajes a {sender_nickname} - {sender_ip}:{sender_port}")
-                    client_socket = ClientTCP(f"client_of_{recipient_nickname}_to_send_messages_to_{sender_nickname}", sender_ip, sender_port)
-                    user_info.client = client_socket # lo usaremos para enviar mensajes al sender
-            return
-
-        if action == "JOIN_CHATROOM":
-            if MY_NICKNAME != sender_nickname:
+    # Aquí se debe realizar la actualización de la GUI (en el hilo principal)
+    if action == "CREATE_TCP_SERVER":
+        recipient_nickname = arguments[0]
+        if recipient_nickname == MY_NICKNAME:
+            user_info = USER_INFO_BY_NICKNAME.get(sender_nickname)
+            if not user_info:
                 USER_INFO_BY_NICKNAME[sender_nickname] = UserInfo(sender_nickname)
-                MY_CHATROOM.update_user_list()
-                MY_CHATROOM.send_my_info_to_new_user(MY_NICKNAME)
-            return
-        
-        if action == "UPDATE_USER_LIST":
-
-            if sender_nickname != MY_NICKNAME and sender_nickname not in USER_INFO_BY_NICKNAME:
+                user_info = USER_INFO_BY_NICKNAME[sender_nickname]
+            # NOTA: se llama al método desde el hilo principal, ya que este slot se ejecuta en el main thread.
+            MY_CHATROOM.open_chat_in_recipient_side(recipient_nickname=sender_nickname, sender_nickname=recipient_nickname)
+    elif action == "CREATE_TCP_CLIENT":
+        recipient_nickname = arguments[0]
+        if recipient_nickname == MY_NICKNAME:
+            sender_ip = arguments[1]
+            sender_port = int(arguments[2])
+            user_info = USER_INFO_BY_NICKNAME.get(sender_nickname)
+            if not user_info:
                 USER_INFO_BY_NICKNAME[sender_nickname] = UserInfo(sender_nickname)
-                MY_CHATROOM.update_user_list()
-            return
-        
-    def stop(self):
-        self.stop_event.set()
-        
+                user_info = USER_INFO_BY_NICKNAME[sender_nickname]
+            if user_info.client is None:
+                print(f"Intentando crear cliente para enviar mensajes a {sender_nickname} - {sender_ip}:{sender_port}")
+                client_socket = ClientTCP(f"client_of_{recipient_nickname}_to_send_messages_to_{sender_nickname}", sender_ip, sender_port)
+                user_info.client = client_socket
+    elif action == "JOIN_CHATROOM":
+        if MY_NICKNAME != sender_nickname:
+            USER_INFO_BY_NICKNAME[sender_nickname] = UserInfo(sender_nickname)
+            MY_CHATROOM.update_user_list()
+            MY_CHATROOM.send_my_info_to_new_user(MY_NICKNAME)
+    elif action == "UPDATE_USER_LIST":
+        if sender_nickname != MY_NICKNAME and sender_nickname not in USER_INFO_BY_NICKNAME:
+            USER_INFO_BY_NICKNAME[sender_nickname] = UserInfo(sender_nickname)
+            MY_CHATROOM.update_user_list()
 
 def main():
     global MULTICAST_NODE, MY_MULTICAST_PORT
@@ -688,12 +680,24 @@ def main():
     is_master = True if len(sys.argv) > 1 and sys.argv[1] == "master" else False
     MY_MULTICAST_PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 30001
     MULTICAST_NODE = MulticastNode(ip_multicast, MY_MULTICAST_PORT)
-    IncomingMessageOrchestrator(MULTICAST_NODE, is_master)
+
+    worker = IncomingMessageOrchestrator(MULTICAST_NODE, is_master)
+    thread = QThread()
+    worker.moveToThread(thread)
+    # Conectar la señal del worker a un slot que se encargue de actualizar la GUI
+    worker.messageReceived.connect(handle_incoming_message)
+    thread.started.connect(worker.process)
+    thread.start()
 
     app = QApplication(sys.argv)
     ventana = MainWindow()
     ventana.show()
     sys.exit(app.exec_())
+
+    # Al cerrar la aplicación, detener el worker y el thread
+    worker.stop()
+    thread.quit()
+    thread.wait()
 
 if __name__ == "__main__":
     main()
