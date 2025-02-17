@@ -435,6 +435,12 @@ class CheckIncomingMessages:
             print(f"Lo envió {self.sender_nickname}")
             print(f"Lo recibe {self.chatroom.sender_nickname}")
 
+            if self.sender_nickname in self.chatroom.text_box:
+                print(f"Clave {self.sender_nickname} encontrada en text_box")
+                #self.chatroom.text_box[self.sender_nickname].append(f"{self.sender_nickname}: {mensaje}")
+            else:
+                print("Error: clave", self.sender_nickname, "no encontrada en text_box")
+
             #self.chatroom.text_box[self.sender_nickname].append(f"{self.sender_nickname}: {mensaje}")
 
         except queue.Empty:
