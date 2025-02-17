@@ -401,14 +401,14 @@ class CheckIncomingMessages:
 
             # Obtener el chatroom de la persona que le envió el mensaje a este self.server
             # esto es para obtener el nickname después
-            chat_window = get_chatroom_by_address(address)
-            print(chat_window)
+            #chat_window = get_chatroom_by_address(address)
+            #print(chat_window)
             
             # Nickname de la persona que le envió el mensaje a este self.server
-            sender_nickname = chat_window.sender_nickname
+            #sender_nickname = chat_window.sender_nickname
 
             print(f"Mensaje recibido de {address}: {mensaje}")
-            print(f"sender_nickname {sender_nickname}")
+            #print(f"sender_nickname {sender_nickname}")
             print(f"recipient_nickname {self.chatroom.sender_nickname}")
 
             # El mensaje recibido debe mostrarse en la ventana de chat del
@@ -416,7 +416,7 @@ class CheckIncomingMessages:
             # TODO: esto debe cambiar a enviar un mensaje al orchestrator
             # ya que ahorita actualiza la interfaz gráfica directamente
             #self.chatroom.text_box[sender_nickname].append(f"{sender_nickname}: {mensaje}")
-            
+
         except queue.Empty:
             # Si no hay mensajes en la cola, continuar
             pass
