@@ -10,13 +10,14 @@ import errno
 import os
 import uuid
 import threading
+import platform
 import time
 os.environ["PYGAME_HIDE_SUPPORT_PROMPT"] = "1"
 import pygame
 from pygame.locals import *
 
 # Dirección de grupo multicast (rango 224.0.0.0 - 239.255.255.255)
-MCAST_GRP = '224.0.0.1'
+MCAST_GRP = '224.0.0.0'
 MCAST_PORT = 30000
 TTL = 1
 
@@ -53,10 +54,11 @@ class MulticastNode:
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
         # Después REUSEPORT (no siempre disponible)
-        operative_system = os.uname().sysname
+        operative_system = platform.uname().system
         if operative_system != "Windows":
             self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
-            self.sock.bind(('', self.port))
+        
+        self.sock.bind(('', self.port))
 
         group_bin = socket.inet_aton(self.group)
         mreq = struct.pack('4sL', group_bin, socket.INADDR_ANY)
