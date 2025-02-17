@@ -261,7 +261,7 @@ class ChatroomWindows(QWidget):
 
             # si el recipient no tiene un cliente para escribirnos
             # hay que decirle al recipient que cree uno
-            self.send_request_to_create_tcp_client(recipient_nickname, port)
+            #self.send_request_to_create_tcp_client(recipient_nickname, port)
 
     def create_window_group(self):
         # Crear una nueva ventana para el chat
