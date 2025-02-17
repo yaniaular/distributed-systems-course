@@ -243,6 +243,26 @@ class ChatroomWindows(QWidget):
             sender_nickname = self.sender_nickname
         self.create_window_chat(recipient_nickname, sender_nickname)
 
+        user_info = USER_INFO_BY_NICKNAME.get(recipient_nickname, False)
+        if not user_info:
+            USER_INFO_BY_NICKNAME[recipient_nickname] = UserInfo(recipient_nickname)
+            user_info = USER_INFO_BY_NICKNAME[recipient_nickname]
+
+        # CREAR SERVIDOR PARA RECIBIR MENSAJES DE LA PERSONA CON LA QUE QUIERO CHATEAR
+        if user_info.server_listening is None:
+            print(f"creando server para recibir mensajes de {recipient_nickname}")
+            # si el sender no tiene un servidor tcp para recibir mensajes del recipient, hay que crearlo
+            port = get_free_port()
+            server = ServerTCP(f"server_of_{self.sender_nickname}_to_receive_messages_from_{recipient_nickname}", get_ip_local(), port)
+            server.start()
+            
+            user_info.server_listening = server
+            user_info.check_incoming_messages = CheckIncomingMessages(server, self) # mando el chatroom para que pueda actualizar la interfaz
+
+            # si el recipient no tiene un cliente para escribirnos
+            # hay que decirle al recipient que cree uno
+            self.send_request_to_create_tcp_client(recipient_nickname, port)
+
     def create_window_group(self):
         # Crear una nueva ventana para el chat
         self.group_chat = QMainWindow()
@@ -327,6 +347,7 @@ class ChatroomWindows(QWidget):
             self.text_box[recipient_nickname].append(f"Tú: {message}")
             self.entry_message[recipient_nickname].clear()
 
+            print(f"Enviando mensaje a {recipient_nickname}: {message}")
             recipient_user_info = USER_INFO_BY_NICKNAME[recipient_nickname] #paco
             print(f"USER_INFO_BY_NICKNAME {USER_INFO_BY_NICKNAME}")
             for nickname, user_info in USER_INFO_BY_NICKNAME.items():
@@ -339,9 +360,9 @@ class ChatroomWindows(QWidget):
                 print(f"user_info {user_info.entry_message}")
 
             
-            #client_socket = recipient_user_info.client
-            #data = client_socket.send_message(message)
-            #print('Servidor: ' + data)
+            client_socket = recipient_user_info.client
+            data = client_socket.send_message(message)
+            print('Servidor: ' + data)
 
     def send_request_to_create_tcp_server(self, recipient_nickname):
         """ This method send a request to create a tcp server in the recipient side
