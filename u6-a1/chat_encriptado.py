@@ -35,6 +35,8 @@ logger = logging.getLogger("App principal")
 
 SHIFT = 30
 
+usuarios = {"yani": 12345, "paco": 12345}
+
 def caesar_encrypt(message: str, shift: int) -> str:
     result = ""
     for char in message:
@@ -513,6 +515,12 @@ class NicknameWindow(QMainWindow):
         self.txt_nickname = QLineEdit(self)
         layout.addWidget(self.txt_nickname)
 
+        self.label_instruction_password = QLabel("Ingresa tu contraseña:", self)
+        layout.addWidget(self.label_instruction_password)
+
+        self.txt_password = QLineEdit(self)
+        layout.addWidget(self.txt_password)
+
         self.btn_confirm = QPushButton("Confirmar", self)
         self.btn_confirm.clicked.connect(self.confirm_nickname)
         layout.addWidget(self.btn_confirm)
@@ -520,12 +528,21 @@ class NicknameWindow(QMainWindow):
     def confirm_nickname(self):
         global MY_NICKNAME, MY_CHATROOM
         nickname = self.txt_nickname.text().strip()
+        password = self.txt_password.text().strip()
         if not nickname:
             QMessageBox.warning(self, "Advertencia", "Por favor, ingresa un nickname.")
             return
 
         if nickname in USER_INFO_BY_NICKNAME:
             QMessageBox.warning(self, "Advertencia", "El nickname ya está en uso.")
+            return
+
+        if nickname not in usuarios:
+            QMessageBox.warning(self, "Advertencia", "Nickname no válido.")
+            return
+        
+        if password != str(usuarios[nickname]):
+            QMessageBox.warning(self, "Advertencia", "Contraseña incorrecta.")
             return
 
         QMessageBox.information(self, "Información", f"Bienvenido {nickname}")
