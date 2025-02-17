@@ -139,6 +139,7 @@ class ClientTCP:
         self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.client_socket.connect(self.address)
         logger.info("Conexión establecida con el servidor!")
+        self.send_message("Hola, estoy conectado!")
 
     def send_message(self, message: str):
         print(f"Enviando mensaje al servidor... {message}")
@@ -658,6 +659,7 @@ class IncomingMessageOrchestrator:
                     USER_INFO_BY_NICKNAME[sender_nickname] = UserInfo(sender_nickname)
                     user_info = USER_INFO_BY_NICKNAME[sender_nickname]
                 if user_info.client is None: # tengo un cliente para escribirle a sender???
+                    print(f"Intentanto crear cliente para enviar mensajes a {sender_nickname} - {sender_ip}:{sender_port}")
                     client_socket = ClientTCP(f"client_of_{recipient_nickname}_to_send_messages_to_{sender_nickname}", sender_ip, sender_port)
                     user_info.client = client_socket # lo usaremos para enviar mensajes al sender
             return
