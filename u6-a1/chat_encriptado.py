@@ -329,10 +329,9 @@ class ChatroomWindows(QWidget):
             self.text_box[recipient_nickname].append(f"Tú: {message}")
             self.entry_message[recipient_nickname].clear()
 
-            sender_user_info = USER_INFO_BY_NICKNAME[self.sender_nickname] #yani
             recipient_user_info = USER_INFO_BY_NICKNAME[recipient_nickname] #paco
 
-            client_socket = sender_user_info.tcp_clients[recipient_nickname]
+            client_socket = recipient_user_info.client
             data = client_socket.send_message(message)
             print('Servidor: ' + data)
 
