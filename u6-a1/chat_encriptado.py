@@ -217,6 +217,7 @@ class ChatroomWindows(QWidget):
             user_info = USER_INFO_BY_NICKNAME[recipient_nickname]
 
         # CREAR SERVIDOR PARA RECIBIR MENSAJES DE LA PERSONA CON LA QUE QUIERO CHATEAR
+        time.sleep(1)
         if user_info.server_listening is None:
             print(f"creando server para recibir mensajes de {recipient_nickname}")
             # si el sender no tiene un servidor tcp para recibir mensajes del recipient, hay que crearlo
