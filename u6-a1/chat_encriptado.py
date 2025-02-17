@@ -33,6 +33,26 @@ logging.basicConfig(
 
 logger = logging.getLogger("App principal")
 
+SHIFT = 3
+
+def caesar_encrypt(message: str, shift: int) -> str:
+    result = ""
+    for char in message:
+        # Encriptamos letras mayúsculas
+        if char.isupper():
+            result += chr((ord(char) - 65 + shift) % 26 + 65)
+        # Encriptamos letras minúsculas
+        elif char.islower():
+            result += chr((ord(char) - 97 + shift) % 26 + 97)
+        else:
+            # Si no es letra, se mantiene igual
+            result += char
+    return result
+
+def caesar_decrypt(message: str, shift: int) -> str:
+    # La desencriptación es simplemente encriptar con el negativo del shift
+    return caesar_encrypt(message, -shift)
+
 def get_chatroom_by_address(address: str) -> Optional["ChatroomWindows"]:
     """ Retorna la ventana de chat asociada a la dirección IP. """
     nickname = MAPPER_ADDR_TO_NICKNAME.get(address)
@@ -108,8 +128,9 @@ class ServerTCP:
                 data = conn.recv(buffer_size)
                 if data:
                     msg = data.decode('utf-8')
-                    incoming_queue.put((msg, addr))
-                    logger.info("Mensaje recibido de %s: %s", str(addr), str(msg))
+                    decrypted_msg = caesar_decrypt(msg, SHIFT)
+                    incoming_queue.put((decrypted_msg, addr))
+                    logger.info("Mensaje recibido de %s: %s", str(addr), str(decrypted_msg))
                     ack = "ACK"
                     conn.send(ack.encode())
         except KeyboardInterrupt:
@@ -138,14 +159,21 @@ class ClientTCP:
         self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.client_socket.connect(self.address)
         logger.info("Conexión establecida con el servidor!")
-        self.send_message("Hola, estoy conectado!")
 
     def send_message(self, message: str):
-        print(f"Enviando mensaje al servidor... {message}")
-        self.client_socket.send(message.encode())
+        # Encriptar el mensaje
+        encrypted_message = caesar_encrypt(message, SHIFT)
+
+        print(f"Mensaje sin encriptar: {message}")
+        print(f"Mensaje encriptado: {encrypted_message}")
+        self.client_socket.send(encrypted_message.encode())
+        
+        # Recibir ACK (suponiendo que el servidor envía un ACK encriptado)
         data = self.client_socket.recv(self.buffer_size).decode()
-        print(f"Recibido ACK del servidor! {data}")
-        return data
+        # Desencriptar el ACK recibido
+        decrypted_data = caesar_decrypt(data, SHIFT)
+        print(f"Recibido ACK desencriptado del servidor: {decrypted_data}")
+        return decrypted_data
 
     def close(self):
         self.client_socket.close()
