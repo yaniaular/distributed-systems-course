@@ -20,7 +20,8 @@ from PyQt5.QtWidgets import (
 USER_INFO_BY_NICKNAME = {} # información de los usuarios conectados
 MAPPER_ADDR_TO_NICKNAME = {}
 
-AVAILABLE_PORTS = [30000, 30001, 30002, 30003, 30004, 30005, 30006, 30007, 30008, 30009]
+#AVAILABLE_PORTS = [30000, 30001, 30002, 30003, 30004, 30005, 30006, 30007, 30008, 30009]
+AVAILABLE_PORTS = [40000, 40001, 40002, 40003, 40004, 40005, 40006, 40007, 40008, 40009]
 
 # Para enviar mensajes a todos los nodos conectados al grupo multicast
 MULTICAST_NODE = None
