@@ -604,6 +604,7 @@ class NicknameWindow(QMainWindow):
         MY_CHATROOM = self.chatroom_windows
         logger.debug("Chatroom creado para %s - %s", nickname, MY_CHATROOM)
         MY_NICKNAME = nickname
+        time.sleep(3)
         MY_CHATROOM.send_request_to_join_chatroom()
         self.close()
 
@@ -696,7 +697,7 @@ class IncomingMessageOrchestrator(QObject):
         try:
             data = msg.encode('utf-8')
             self.sock.sendto(data, (self.group, self.port))
-            logger.debug("[ENVIADO] %s", msg)
+            logger.debug("[ENVIADO AL ORCHESTRATOR] %s", msg)
         except (KeyboardInterrupt, EOFError):
             sys.exit(0)
         except Exception as e:
