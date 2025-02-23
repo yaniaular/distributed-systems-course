@@ -80,8 +80,12 @@ def get_ip_local():
 
 def get_free_port():
     if IS_MASTER:
-        return AVAILABLE_PORTS_MASTER.pop(0)
-    return AVAILABLE_PORTS_SLAVE.pop(0)
+        port = AVAILABLE_PORTS_MASTER.pop(0)
+        logger.info("Usando puerto maestro %s", port)
+        return port
+    port = AVAILABLE_PORTS_SLAVE.pop(0)
+    logger.info("Usando puerto esclavo %s", port)
+    return port
 
 THREAD_ORCHESTRATOR = None
 WORKER_ORCHESTRATOR = None
@@ -309,7 +313,7 @@ class ChatroomWindows(QWidget):
 
             # crear worker para procesar mensajes entrantes y actualizar la GUI
             # esto se hizo porque con hilos normales la interfaz se congelaba
-            self.check_workers[recipient_nickname] = CheckIncomingMessagesWorker(server, recipient_nickname)
+            self.check_workers[recipient_nickname] = CheckPrivateIncomingMessagesWorker(server, recipient_nickname)
             self.check_threads[recipient_nickname] = QThread()
             self.check_workers[recipient_nickname].moveToThread(self.check_threads[recipient_nickname])
             self.check_workers[recipient_nickname].messageReceived.connect(self.update_private_chat)
@@ -349,7 +353,7 @@ class ChatroomWindows(QWidget):
             user_info.server_listening = server
 
             # crear worker para procesar mensajes entrantes y actualizar la GUI
-            self.check_workers[recipient_nickname] = CheckIncomingMessagesWorker(server, recipient_nickname)
+            self.check_workers[recipient_nickname] = CheckPrivateIncomingMessagesWorker(server, recipient_nickname)
             self.check_threads[recipient_nickname] = QThread()
             self.check_workers[recipient_nickname].moveToThread(self.check_threads[recipient_nickname])
             self.check_workers[recipient_nickname].messageReceived.connect(self.update_private_chat)
@@ -515,7 +519,7 @@ class ChatroomWindows(QWidget):
         font.setPointSize(size)
         return font
 
-class CheckIncomingMessagesWorker(QObject):
+class CheckPrivateIncomingMessagesWorker(QObject):
     messageReceived = pyqtSignal(str)  # Emitirá el mensaje recibido
 
     def __init__(self, server, sender_nickname):
@@ -523,11 +527,13 @@ class CheckIncomingMessagesWorker(QObject):
         self.server = server
         self.sender_nickname = sender_nickname
         self.running = True
+        logger.info("************ Worker creado para %s", sender_nickname)
 
     def process(self):
         while self.running:
             try:
                 mensaje, address = self.server.incoming_queue.get(timeout=0.1) # TODO: guardar el address
+                logger.debug("Mensaje recibido en worker: %s", mensaje)
                 # Emitir el mensaje recibido para actualizar la GUI en el hilo principal
                 self.messageReceived.emit(f"{self.sender_nickname}:{mensaje}")
             except queue.Empty:
@@ -643,70 +649,56 @@ class UserInfo:
         self.visual_chat = None # es el area donde se ven los mensajes en la ventana de chat privado con este usuario
         self.entry_message = None # es el area para escribir mis mensajes en la ventana de chat privado con este usuario
 
-class MulticastNode:
-    """ Esta clase se encarga de crear un nodo el cual creará una conexión multicast 
-    para difundir mensajes a todos los demás nodos conectados al grupo multicast. 
-    Los mensajes son almacenados en una cola incoming_messages_queue y deben ser
-    procesados por otro hilo.
-
-    IMPORTANTE! Debe implementarse la lógica para procesar los mensajes recibidos y 
-    guardados en el atributo incoming_messages_queue.
+class IncomingMessageOrchestrator(QObject):
+    """ Esta clase crea un hilo que se enacarga de procesar los mensajes
+    entrantes en el atributo incoming_messages_queue de un nodo multicast.
     """
-    def __init__(self, group, port, ttl=1):
-        self.group = group # Dirección de grupo multicast
-        self.port = port # Puerto multicast
-        self.ttl = ttl # Time-to-live (saltos máximos)
-        self.sock = None # Socket multicast
-        self.incoming_messages_queue = None # Cola de mensajes entrantes
-        self.stop_event = None # Evento para detener el hilo de escucha
-        self.receiver_thread = None # Hilo de escucha
-        self.start() # Iniciar hilo de escucha
+    messageReceived = pyqtSignal(str, str, list, bool)
+    
+    def __init__(self, is_master, ip_multicast, port):
+        super().__init__()
+        self.port = port
+        self.group = ip_multicast
+        self.ttl = 1
+        self.create_socket()
+        self.is_master = is_master
+        self.running = True
+        logger.info("IncomingMessageOrchestrator creado.")
 
-    def start(self):
+    def create_socket(self):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-
-        # IMPORTANTE: forzar a que los paquetes que envíes por multicast
-        # también se reciban en la propia máquina (loopback).
-        self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 1)
-
-        #operative_system = platform.uname().system
-        #if operative_system != "Windows":
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
-        
         self.sock.bind(('', self.port))
-
         group_bin = socket.inet_aton(self.group)
         mreq = struct.pack('4sL', group_bin, socket.INADDR_ANY)
         self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
-
-        ttl_bin = struct.pack('@i', self.ttl)
-        self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, ttl_bin)
-
         logger.debug("[MulticastReceiver] Escuchando en grupo %s:%s (TTL=%s).", self.group, self.port, self.ttl)
 
-        self.incoming_messages_queue = multiprocessing.Queue()
-        self.stop_event = multiprocessing.Event()
-        self.receiver_thread = multiprocessing.Process(
-            target=self.receiver,
-            args=(self.sock,self.incoming_messages_queue, self.group, self.port, self.stop_event),
-            daemon=True
-        )
-        self.receiver_thread.start()
+    def send(self, msg):
+        try:
+            data = msg.encode('utf-8')
+            self.sock.sendto(data, (self.group, self.port))
+            logger.debug("[ENVIADO] %s", msg)
+        except (KeyboardInterrupt, EOFError):
+            sys.exit(0)
+        except Exception as e:
+            logger.error("[ERROR] %s", e)
 
-    def stop(self):
-        logger.debug("[MulticastReceiver] Deteniendo receptor...")
-        self.stop_event.set()
-        self.receiver_thread.terminate()
-        self.receiver_thread.join()
-        
-    @staticmethod
-    def receiver(sock, queue, group, port, stop_event):
-        while not stop_event.is_set():
+    def process(self):
+        logger.debug("[MulticastReceiver] Iniciando proceso de escucha...")
+        while self.running:
             try:
-                data, addr = sock.recvfrom(1024)
+                logger.debug("[MulticastReceiver] Esperando mensaje...")
+                data, addr = self.sock.recvfrom(1024)
                 msg = data.decode('utf-8', errors='replace')
-                queue.put((msg, addr))
+                logger.info("Recibido en IncomingMessageOrchestrator, msg: %s, addr: %s", msg, addr)
+                if msg:
+                    arguments = msg.split(":")
+                    action = arguments[0]
+                    sender_nickname = arguments[1]
+                    # Emitir la señal para que el hilo principal maneje la actualización de la GUI
+                    self.messageReceived.emit(action, sender_nickname, arguments[2:], self.is_master)
             except socket.timeout:
                 pass
             except OSError as e:
@@ -721,49 +713,8 @@ class MulticastNode:
             except Exception as e:
                 logger.debug("[RECEIVER] Error recibiendo: %s", e)
                 break
-        sock.close()
+        self.sock.close()
         logger.debug("[MulticastReceiver] Finalizando proceso de escucha.")
-
-    def send(self, msg):
-        try:
-            data = msg.encode('utf-8')
-            self.sock.sendto(data, (self.group, self.port))
-            logger.debug("[ENVIADO] %s", msg)
-        except (KeyboardInterrupt, EOFError):
-            sys.exit(0)
-        except Exception as e:
-            logger.error("[ERROR] %s", e)
-
-class IncomingMessageOrchestrator(QObject):
-    """ Esta clase crea un hilo que se enacarga de procesar los mensajes
-    entrantes en el atributo incoming_messages_queue de un nodo multicast.
-    """
-    messageReceived = pyqtSignal(str, str, list, bool)
-    
-    def __init__(self, node, is_master):
-        super().__init__()
-        self.node = node
-        self.is_master = is_master
-        self.running = True
-
-    def process(self):
-        # Este método se ejecutará en el QThread
-        while self.running:
-            try:
-                # Usamos un timeout para que el get() no bloquee indefinidamente
-                msg, addr = self.node.incoming_messages_queue.get(timeout=0.1)
-                logger.info("[RECIBIDO] %s de %s", msg, addr)
-                if msg:
-                    arguments = msg.split(":")
-                    action = arguments[0]
-                    sender_nickname = arguments[1]
-                    # Emitir la señal para que el hilo principal maneje la actualización de la GUI
-                    self.messageReceived.emit(action, sender_nickname, arguments[2:], self.is_master)
-            except queue.Empty:
-                continue
-            except Exception as e:
-                print(f"[ERROR] {e}")
-                break
 
     def stop(self):
         self.running = False
@@ -814,15 +765,21 @@ def main():
     global MULTICAST_NODE, MY_MULTICAST_PORT, WORKER_ORCHESTRATOR, THREAD_ORCHESTRATOR, MY_CHATROOM, IS_MASTER
     # Conectarse a un servidor multicast para comunicación interna o técnica entre nodos.
     # Esto actuará como orquestador de mensajes entre los nodos.
-    ip_multicast = "224.0.0.1"
+    ip_multicast = "224.0.0.0"
     is_master = True if len(sys.argv) > 1 and sys.argv[1] == "master" else False
     IS_MASTER = is_master
     MY_MULTICAST_PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 30000
-    MULTICAST_NODE = MulticastNode(ip_multicast, MY_MULTICAST_PORT)
+
+    logger.debug("ip_multicast %s", ip_multicast)
+    logger.debug("is_master %s", is_master)
+    logger.debug("MY_MULTICAST_PORT %s", MY_MULTICAST_PORT)
     logger.debug("MULTICAST_NODE %s", MULTICAST_NODE)
 
-    WORKER_ORCHESTRATOR = IncomingMessageOrchestrator(MULTICAST_NODE, is_master)
+    WORKER_ORCHESTRATOR = IncomingMessageOrchestrator(is_master, ip_multicast, MY_MULTICAST_PORT)
+    MULTICAST_NODE = WORKER_ORCHESTRATOR
+    logger.debug("Create QThread for IncomingMessageOrchestrator")
     THREAD_ORCHESTRATOR = QThread()
+    logger.debug("Move IncomingMessageOrchestrator to QThread")
     WORKER_ORCHESTRATOR.moveToThread(THREAD_ORCHESTRATOR)
     # Conectar la señal del worker a un slot que se encargue de actualizar la GUI
     WORKER_ORCHESTRATOR.messageReceived.connect(handle_incoming_message)
@@ -830,14 +787,19 @@ def main():
     THREAD_ORCHESTRATOR.start()
 
     app = QApplication(sys.argv)
+    logger.debug("Creando ventana principal...")
     ventana = MainWindow()
     ventana.show()
 
-    # Al cerrar la aplicación, detener el worker y el thread
+    # AQUÍ haces el bucle principal; la ventana se ve
+    ret = app.exec_()
+
+    # CUANDO se cierra la ventana, app.exec_() regresa:
     WORKER_ORCHESTRATOR.stop()
     THREAD_ORCHESTRATOR.quit()
     THREAD_ORCHESTRATOR.wait()
-    sys.exit(app.exec_())
+
+    sys.exit(ret)
 
 if __name__ == "__main__":
     main()
