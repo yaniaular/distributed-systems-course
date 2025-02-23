@@ -269,6 +269,8 @@ class ChatroomWindows(QWidget):
         self.timer.timeout.connect(self.update_user_list)
         self.timer.start(1000)
 
+        self.timer_to_join = QTimer.singleShot(5000, self.send_request_to_join_chatroom)
+
     def update_group_chat(self, sender_nickname, mensaje):
         # Aquí actualizamos la interfaz de forma segura en el hilo principal
         # Asegúrate de usar la clave correcta, por ejemplo, el nickname del destinatario
@@ -604,8 +606,6 @@ class NicknameWindow(QMainWindow):
         MY_CHATROOM = self.chatroom_windows
         logger.debug("Chatroom creado para %s - %s", nickname, MY_CHATROOM)
         MY_NICKNAME = nickname
-        time.sleep(3)
-        MY_CHATROOM.send_request_to_join_chatroom()
         self.close()
 
 
@@ -815,7 +815,6 @@ def main():
 
     # AQUÍ haces el bucle principal; la ventana se ve
     ret = app.exec_()
-
     # CUANDO se cierra la ventana, app.exec_() regresa:
     #WORKER_ORCHESTRATOR.stop()
     #THREAD_ORCHESTRATOR.quit()
