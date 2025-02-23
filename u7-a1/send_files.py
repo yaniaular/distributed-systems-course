@@ -655,7 +655,7 @@ class IncomingMessageOrchestrator(QObject):
         super().__init__()
         self.port = port
         self.group = ip_multicast
-        self.ttl = 4
+        self.ttl = 10
         self.create_socket()
         self.is_master = is_master
         self.running = True
@@ -664,11 +664,21 @@ class IncomingMessageOrchestrator(QObject):
     def create_socket(self):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        
         operating_system = platform.system()
+        
         logger.debug("Sistema operativo: %s", operating_system)
+
+        if operating_system == "Windows":
+            local_ip = get_ip_local()  # algo como 192.168.1.20
+            self.sock.setsockopt(
+                socket.IPPROTO_IP,
+                socket.IP_MULTICAST_IF,
+                socket.inet_aton(local_ip)
+)
         if operating_system != "Windows":
-            logger.debug("Sistema no es windows operativo: %s", operating_system)
             self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        
         self.sock.bind(('', self.port))
         group_bin = socket.inet_aton(self.group)
         mreq = struct.pack('4sL', group_bin, socket.INADDR_ANY)
