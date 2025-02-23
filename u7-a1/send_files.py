@@ -73,6 +73,7 @@ def get_ip_local():
         ip_local = "127.0.0.1"
     finally:
         s.close()
+    logger.debug("IP local: %s", ip_local)
     return ip_local
 
 def get_free_port():
@@ -666,6 +667,7 @@ class IncomingMessageOrchestrator(QObject):
         operating_system = platform.system()
         logger.debug("Sistema operativo: %s", operating_system)
         if operating_system != "Windows":
+            logger.debug("Sistema no es windows operativo: %s", operating_system)
             self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
         self.sock.bind(('', self.port))
         group_bin = socket.inet_aton(self.group)
