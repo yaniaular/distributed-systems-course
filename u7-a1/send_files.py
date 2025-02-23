@@ -649,7 +649,7 @@ class IncomingMessageOrchestrator(QObject):
     """ Esta clase crea un hilo que se enacarga de procesar los mensajes
     entrantes en el atributo incoming_messages_queue de un nodo multicast.
     """
-    messageReceived = pyqtSignal(str, str, list, bool)
+    messageReceived = pyqtSignal(list, bool)
     
     def __init__(self, is_master, ip_multicast, port):
         super().__init__()
@@ -707,10 +707,8 @@ class IncomingMessageOrchestrator(QObject):
                 logger.info("Recibido en IncomingMessageOrchestrator, msg: %s, addr: %s", msg, addr)
                 if msg:
                     arguments = msg.split(":")
-                    action = arguments[0]
-                    sender_nickname = arguments[1]
                     # Emitir la señal para que el hilo principal maneje la actualización de la GUI
-                    self.messageReceived.emit(action, sender_nickname, arguments[2:], self.is_master)
+                    self.messageReceived.emit(arguments, self.is_master)
             except socket.timeout:
                 pass
             except OSError as e:
@@ -731,14 +729,17 @@ class IncomingMessageOrchestrator(QObject):
     def stop(self):
         self.running = False
 
-def handle_incoming_message(action, sender_nickname, arguments, is_master):
+def handle_incoming_message(arguments, is_master):
     global MY_NICKNAME, USER_INFO_BY_NICKNAME, MY_CHATROOM
+
+    action = arguments[0]
+    sender_nickname = arguments[1]
     
     logger.debug("[Recibido en %s] %s de %s", MY_NICKNAME, action, sender_nickname)
 
     # Aquí se debe realizar la actualización de la GUI (en el hilo principal)
     if action == "CREATE_TCP_SERVER":
-        recipient_nickname = arguments[0]
+        recipient_nickname = arguments[2]
         if recipient_nickname == MY_NICKNAME:
             user_info = USER_INFO_BY_NICKNAME.get(sender_nickname)
             if not user_info:
@@ -747,10 +748,10 @@ def handle_incoming_message(action, sender_nickname, arguments, is_master):
             # NOTA: se llama al método desde el hilo principal, ya que este slot se ejecuta en el main thread.
             MY_CHATROOM.open_chat_in_recipient_side(recipient_nickname=sender_nickname, sender_nickname=recipient_nickname)
     elif action == "CREATE_TCP_CLIENT":
-        recipient_nickname = arguments[0]
+        recipient_nickname = arguments[2]
         if recipient_nickname == MY_NICKNAME:
-            sender_ip = arguments[1]
-            sender_port = int(arguments[2])
+            sender_ip = arguments[3]
+            sender_port = int(arguments[4])
             user_info = USER_INFO_BY_NICKNAME.get(sender_nickname)
             if not user_info:
                 USER_INFO_BY_NICKNAME[sender_nickname] = UserInfo(sender_nickname)
