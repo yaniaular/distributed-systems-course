@@ -668,7 +668,9 @@ class IncomingMessageOrchestrator(QObject):
     def create_socket(self):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        operating_system = platform.system()
+        if operating_system != "Windows":
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
         self.sock.bind(('', self.port))
         group_bin = socket.inet_aton(self.group)
         mreq = struct.pack('4sL', group_bin, socket.INADDR_ANY)
