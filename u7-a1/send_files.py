@@ -664,6 +664,7 @@ class IncomingMessageOrchestrator(QObject):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         operating_system = platform.system()
+        logger.debug("Sistema operativo: %s", operating_system)
         if operating_system != "Windows":
             self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
         self.sock.bind(('', self.port))
