@@ -654,7 +654,7 @@ class IncomingMessageOrchestrator(QObject):
         super().__init__()
         self.port = port
         self.group = ip_multicast
-        self.ttl = 1
+        self.ttl = 4
         self.create_socket()
         self.is_master = is_master
         self.running = True
