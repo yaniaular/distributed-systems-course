@@ -272,7 +272,7 @@ class ChatroomWindows(QWidget):
     def update_group_chat(self, sender_nickname, mensaje):
         # Aquí actualizamos la interfaz de forma segura en el hilo principal
         # Asegúrate de usar la clave correcta, por ejemplo, el nickname del destinatario
-        logger.debug("Mensaje recibido de %s: %s", sender_nickname, mensaje)
+        logger.debug("Mensaje grupal recibido de %s: %s", sender_nickname, mensaje)
         #self.chat_display.append(f"{sender_nickname}: {mensaje}")
 
     def update_private_chat(self, mensaje):
@@ -600,7 +600,7 @@ class NicknameWindow(QMainWindow):
 
         self.chatroom_windows = ChatroomWindows(nickname) # se usa self porque sino no funciona la interfaz
         self.chatroom_windows.show()
-        self.chatroom_windows.update()
+        #self.chatroom_windows.update()
         MY_CHATROOM = self.chatroom_windows
         logger.debug("Chatroom creado para %s - %s", nickname, MY_CHATROOM)
         MY_NICKNAME = nickname
@@ -740,7 +740,7 @@ def handle_incoming_message(arguments, is_master):
     action = arguments[0]
     sender_nickname = arguments[1]
     
-    logger.debug("[Recibido en %s] %s de %s", MY_NICKNAME, action, sender_nickname)
+    logger.debug("**handle_incoming_message** [Recibido en %s] %s de %s", MY_NICKNAME, action, sender_nickname)
 
     # Aquí se debe realizar la actualización de la GUI (en el hilo principal)
     if action == "CREATE_TCP_SERVER":
