@@ -269,6 +269,12 @@ class ChatroomWindows(QWidget):
         self.timer.timeout.connect(self.update_user_list)
         self.timer.start(1000)
 
+    def update_group_chat(self, sender_nickname, mensaje):
+        # Aquí actualizamos la interfaz de forma segura en el hilo principal
+        # Asegúrate de usar la clave correcta, por ejemplo, el nickname del destinatario
+        logger.debug("Mensaje recibido de %s: %s", sender_nickname, mensaje)
+        #self.chat_display.append(f"{sender_nickname}: {mensaje}")
+
     def update_private_chat(self, mensaje):
         # Aquí actualizamos la interfaz de forma segura en el hilo principal
         # Asegúrate de usar la clave correcta, por ejemplo, el nickname del destinatario
@@ -386,7 +392,7 @@ class ChatroomWindows(QWidget):
 
         # Botón para enviar mensajes
         send_button = QPushButton('Enviar')
-        send_button.clicked.connect(lambda: self.send_message_orchestrator(self.chat_input.text()))
+        send_button.clicked.connect(self.send_message_to_group)
         self.group_layout.addWidget(send_button)
         self.group_chat.show()
 
@@ -666,7 +672,6 @@ class IncomingMessageOrchestrator(QObject):
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         
         operating_system = platform.system()
-        
         logger.debug("Sistema operativo: %s", operating_system)
 
         if operating_system == "Windows":
@@ -769,6 +774,11 @@ def handle_incoming_message(arguments, is_master):
         if sender_nickname != MY_NICKNAME and sender_nickname not in USER_INFO_BY_NICKNAME:
             USER_INFO_BY_NICKNAME[sender_nickname] = UserInfo(sender_nickname)
             MY_CHATROOM.update_user_list()
+    elif action == "SEND_GROUP_MESSAGE":
+        message = arguments[2]
+        MY_CHATROOM.update_group_chat(sender_nickname, message)
+        
+
 
 def main():
     # python send_files.py <server_type> <multicast_port>
