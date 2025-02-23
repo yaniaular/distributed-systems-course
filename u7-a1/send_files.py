@@ -20,8 +20,9 @@ from PyQt5.QtWidgets import (
 USER_INFO_BY_NICKNAME = {} # información de los usuarios conectados
 MAPPER_ADDR_TO_NICKNAME = {}
 
-#AVAILABLE_PORTS = [30000, 30001, 30002, 30003, 30004, 30005, 30006, 30007, 30008, 30009]
-AVAILABLE_PORTS = [40000, 40001, 40002, 40003, 40004, 40005, 40006, 40007, 40008, 40009]
+AVAILABLE_PORTS_MASTER = [30000, 30001, 30002, 30003, 30004, 30005, 30006, 30007, 30008, 30009]
+AVAILABLE_PORTS_SLAVE = [40000, 40001, 40002, 40003, 40004, 40005, 40006, 40007, 40008, 40009]
+IS_MASTER = False
 
 # Para enviar mensajes a todos los nodos conectados al grupo multicast
 MULTICAST_NODE = None
@@ -78,7 +79,9 @@ def get_ip_local():
     return ip_local
 
 def get_free_port():
-    return AVAILABLE_PORTS.pop(0)
+    if IS_MASTER:
+        return AVAILABLE_PORTS_MASTER.pop(0)
+    return AVAILABLE_PORTS_SLAVE.pop(0)
 
 THREAD_ORCHESTRATOR = None
 WORKER_ORCHESTRATOR = None
@@ -94,7 +97,6 @@ def terminate_application():
     Cierra el programa.
     """
     global MY_CHATROOM, USER_INFO_BY_NICKNAME, MULTICAST_NODE, WORKER_ORCHESTRATOR, THREAD_ORCHESTRATOR
-    print("********* ID del proceso terminate_application:", os.getpid())
     logger.debug("[SALIR] Saliendo de la aplicación...")
     logger.debug("MY_CHATROOM %s", MY_CHATROOM)
 
@@ -126,8 +128,8 @@ def singal_handler_terminate(signum, frame):
     logger.debug("Señal de terminación recibida %s", signum)
     terminate_application()
 
-signal.signal(signal.SIGINT, singal_handler_terminate)
-signal.signal(signal.SIGTERM, singal_handler_terminate)
+#signal.signal(signal.SIGINT, singal_handler_terminate)
+#signal.signal(signal.SIGTERM, singal_handler_terminate)
 
 class ServerTCP:
 
@@ -224,8 +226,6 @@ class ClientTCP:
 class ChatroomWindows(QWidget):
     def __init__(self, nickname: str):
         super().__init__()
-        print("********* ID del proceso ChatroomWindows:", os.getpid())
-
         self.sender_nickname = nickname
 
         self.chat_windows = {} # Diccionario para almacenar las ventanas de cada chat privado
@@ -308,6 +308,7 @@ class ChatroomWindows(QWidget):
             user_info.server_listening = server
 
             # crear worker para procesar mensajes entrantes y actualizar la GUI
+            # esto se hizo porque con hilos normales la interfaz se congelaba
             self.check_workers[recipient_nickname] = CheckIncomingMessagesWorker(server, recipient_nickname)
             self.check_threads[recipient_nickname] = QThread()
             self.check_workers[recipient_nickname].moveToThread(self.check_threads[recipient_nickname])
@@ -384,7 +385,7 @@ class ChatroomWindows(QWidget):
 
         # Botón para enviar mensajes
         send_button = QPushButton('Enviar')
-        send_button.clicked.connect(self.send_message_orchestrator)
+        send_button.clicked.connect(lambda: self.send_message_orchestrator(self.chat_input.text()))
         self.group_layout.addWidget(send_button)
         self.group_chat.show()
 
@@ -504,6 +505,8 @@ class ChatroomWindows(QWidget):
         self.send_message_orchestrator(message)
 
     def send_message_orchestrator(self, message):
+        logger.info("Enviando mensaje: %s", message)
+        logger.info("MULTICAST_NODE %s", MULTICAST_NODE)
         MULTICAST_NODE.send(message)
 
     def get_font(self, size):
@@ -540,8 +543,6 @@ class NicknameWindow(QMainWindow):
     """ Ventana secundaria para ingresar el nickname. """
     def __init__(self):
         super().__init__()
-        print("********* ID del proceso NicknameWindow:", os.getpid())
-
         self.setWindowTitle("Ingresar Nickname")
         self.setGeometry(200, 200, 300, 150)
 
@@ -592,7 +593,7 @@ class NicknameWindow(QMainWindow):
         self.chatroom_windows = ChatroomWindows(nickname) # se usa self porque sino no funciona la interfaz
         self.chatroom_windows.show()
         self.chatroom_windows.update()
-        MY_CHATROOM = self.chatroom_windows # TODO: esta variable no se esta compartiendo entre procesos
+        MY_CHATROOM = self.chatroom_windows
         logger.debug("Chatroom creado para %s - %s", nickname, MY_CHATROOM)
         MY_NICKNAME = nickname
         MY_CHATROOM.send_request_to_join_chatroom()
@@ -602,8 +603,6 @@ class NicknameWindow(QMainWindow):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        print("********* ID del proceso MainWindow:", os.getpid())
-
         self.setWindowTitle("Ventana Principal")
         self.setGeometry(100, 100, 300, 200)
 
@@ -617,7 +616,6 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.btn_nickname)
 
         self.btn_cerrar = QPushButton("Cerrar todas las sesiones", self)
-        #self.btn_cerrar.clicked.connect(lambda: terminate_application(self.get_chatroom()))
         self.btn_cerrar.clicked.connect(terminate_application)
 
         layout.addWidget(self.btn_cerrar)
@@ -629,19 +627,11 @@ class MainWindow(QMainWindow):
     def ask_nickname_window(self):
         self.nickname_window.show()
 
-    def get_chatroom(self):
-        return self.nickname_window.chatroom_windows
-
     def list_users(self):
         for nickname, user_info in USER_INFO_BY_NICKNAME.items():
             print(nickname, user_info)
         for nickname, user_info in USER_INFO_BY_NICKNAME.items():
             print(nickname, user_info.chatroom_window)
-
-    #def close(self):
-    #    self.nickname_window.chatroom_windows.close()
-    #    super().close()
-        
 
 class UserInfo:
     def __init__(self, nickname: str):
@@ -676,9 +666,13 @@ class MulticastNode:
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
-        operative_system = platform.uname().system
-        if operative_system != "Windows":
-            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        # IMPORTANTE: forzar a que los paquetes que envíes por multicast
+        # también se reciban en la propia máquina (loopback).
+        self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 1)
+
+        #operative_system = platform.uname().system
+        #if operative_system != "Windows":
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
         
         self.sock.bind(('', self.port))
 
@@ -758,6 +752,7 @@ class IncomingMessageOrchestrator(QObject):
             try:
                 # Usamos un timeout para que el get() no bloquee indefinidamente
                 msg, addr = self.node.incoming_messages_queue.get(timeout=0.1)
+                logger.info("[RECIBIDO] %s de %s", msg, addr)
                 if msg:
                     arguments = msg.split(":")
                     action = arguments[0]
@@ -812,12 +807,17 @@ def handle_incoming_message(action, sender_nickname, arguments, is_master):
             MY_CHATROOM.update_user_list()
 
 def main():
-    global MULTICAST_NODE, MY_MULTICAST_PORT, WORKER_ORCHESTRATOR, THREAD_ORCHESTRATOR, MY_CHATROOM
+    # python send_files.py <server_type> <multicast_port>
+    # Master: python3 send_files.py master 30001
+    # Other: python3 send_files.py 30001
+
+    global MULTICAST_NODE, MY_MULTICAST_PORT, WORKER_ORCHESTRATOR, THREAD_ORCHESTRATOR, MY_CHATROOM, IS_MASTER
     # Conectarse a un servidor multicast para comunicación interna o técnica entre nodos.
     # Esto actuará como orquestador de mensajes entre los nodos.
-    ip_multicast = "224.0.0.0"
+    ip_multicast = "224.0.0.1"
     is_master = True if len(sys.argv) > 1 and sys.argv[1] == "master" else False
-    MY_MULTICAST_PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 30001
+    IS_MASTER = is_master
+    MY_MULTICAST_PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 30000
     MULTICAST_NODE = MulticastNode(ip_multicast, MY_MULTICAST_PORT)
     logger.debug("MULTICAST_NODE %s", MULTICAST_NODE)
 
@@ -828,8 +828,6 @@ def main():
     WORKER_ORCHESTRATOR.messageReceived.connect(handle_incoming_message)
     THREAD_ORCHESTRATOR.started.connect(WORKER_ORCHESTRATOR.process)
     THREAD_ORCHESTRATOR.start()
-
-    print("********* ID del proceso principal:", os.getpid())
 
     app = QApplication(sys.argv)
     ventana = MainWindow()
