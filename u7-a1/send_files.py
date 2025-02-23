@@ -24,9 +24,6 @@ AVAILABLE_PORTS_MASTER = [30000, 30001, 30002, 30003, 30004, 30005, 30006, 30007
 AVAILABLE_PORTS_SLAVE = [40000, 40001, 40002, 40003, 40004, 40005, 40006, 40007, 40008, 40009]
 IS_MASTER = False
 
-# Para enviar mensajes a todos los nodos conectados al grupo multicast
-MULTICAST_NODE = None
-
 logging.basicConfig(
     level=logging.DEBUG,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -100,14 +97,14 @@ def terminate_application():
     Manejador de señales para Ctrl + C (SIGINT) o SIGTERM.
     Cierra el programa.
     """
-    global MY_CHATROOM, USER_INFO_BY_NICKNAME, MULTICAST_NODE, WORKER_ORCHESTRATOR, THREAD_ORCHESTRATOR
+    global MY_CHATROOM, USER_INFO_BY_NICKNAME, WORKER_ORCHESTRATOR, THREAD_ORCHESTRATOR
     logger.debug("[SALIR] Saliendo de la aplicación...")
     logger.debug("MY_CHATROOM %s", MY_CHATROOM)
 
     if MY_CHATROOM:
         for worker in MY_CHATROOM.check_workers.values():
             worker.stop()
-            worker.quit()
+            #worker.quit()
         for thread in MY_CHATROOM.check_threads.values():
             thread.quit()
         MY_CHATROOM.close()
@@ -121,11 +118,10 @@ def terminate_application():
         if user_info.check_incoming_messages:
             user_info.check_incoming_messages.stop()
             user_info.check_incoming_messages.quit()
-    logger.debug("MULTICAST_NODE %s", MULTICAST_NODE)
-    MULTICAST_NODE.stop()
-    THREAD_ORCHESTRATOR.quit()
-    THREAD_ORCHESTRATOR.wait()
-    WORKER_ORCHESTRATOR.stop()
+    if WORKER_ORCHESTRATOR:
+        WORKER_ORCHESTRATOR.stop()
+    if THREAD_ORCHESTRATOR.isRunning():
+        THREAD_ORCHESTRATOR.quit()
     sys.exit(0)
 
 def singal_handler_terminate(signum, frame):
@@ -510,8 +506,7 @@ class ChatroomWindows(QWidget):
 
     def send_message_orchestrator(self, message):
         logger.info("Enviando mensaje: %s", message)
-        logger.info("MULTICAST_NODE %s", MULTICAST_NODE)
-        MULTICAST_NODE.send(message)
+        WORKER_ORCHESTRATOR.send(message)
 
     def get_font(self, size):
         """ Retorna una fuente con el tamaño especificado. """
@@ -675,6 +670,8 @@ class IncomingMessageOrchestrator(QObject):
         group_bin = socket.inet_aton(self.group)
         mreq = struct.pack('4sL', group_bin, socket.INADDR_ANY)
         self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+        ttl_bin = struct.pack('@i', self.ttl)
+        self.sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, ttl_bin)
         logger.debug("[MulticastReceiver] Escuchando en grupo %s:%s (TTL=%s).", self.group, self.port, self.ttl)
 
     def send(self, msg):
@@ -764,7 +761,7 @@ def main():
     # Master: python3 send_files.py master 30001
     # Other: python3 send_files.py 30001
 
-    global MULTICAST_NODE, MY_MULTICAST_PORT, WORKER_ORCHESTRATOR, THREAD_ORCHESTRATOR, MY_CHATROOM, IS_MASTER
+    global MY_MULTICAST_PORT, WORKER_ORCHESTRATOR, THREAD_ORCHESTRATOR, MY_CHATROOM, IS_MASTER
     # Conectarse a un servidor multicast para comunicación interna o técnica entre nodos.
     # Esto actuará como orquestador de mensajes entre los nodos.
     ip_multicast = "224.0.0.0"
@@ -775,10 +772,8 @@ def main():
     logger.debug("ip_multicast %s", ip_multicast)
     logger.debug("is_master %s", is_master)
     logger.debug("MY_MULTICAST_PORT %s", MY_MULTICAST_PORT)
-    logger.debug("MULTICAST_NODE %s", MULTICAST_NODE)
 
     WORKER_ORCHESTRATOR = IncomingMessageOrchestrator(is_master, ip_multicast, MY_MULTICAST_PORT)
-    MULTICAST_NODE = WORKER_ORCHESTRATOR
     logger.debug("Create QThread for IncomingMessageOrchestrator")
     THREAD_ORCHESTRATOR = QThread()
     logger.debug("Move IncomingMessageOrchestrator to QThread")
@@ -797,9 +792,9 @@ def main():
     ret = app.exec_()
 
     # CUANDO se cierra la ventana, app.exec_() regresa:
-    WORKER_ORCHESTRATOR.stop()
-    THREAD_ORCHESTRATOR.quit()
-    THREAD_ORCHESTRATOR.wait()
+    #WORKER_ORCHESTRATOR.stop()
+    #THREAD_ORCHESTRATOR.quit()
+    #THREAD_ORCHESTRATOR.wait()
 
     sys.exit(ret)
 
