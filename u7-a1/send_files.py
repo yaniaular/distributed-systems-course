@@ -338,18 +338,25 @@ class ChatroomWindows(QWidget):
                 logger.error(f"Error al guardar el archivo: {e}")
                 self.text_box[sender_nickname].append(f"Error al guardar el archivo {file_name}.")
 
-    def update_private_chat_files(self, sender_nickname, file_name, file_size, file_data):
+    def update_private_chat_files(self, sender_nickname, file_name, file_size, file_data, percentage=0):
         """ Este se llama desde self.messageReceived.emit(mensaje) en CheckPrivateIncomingFilesWorker """
-        logger.debug("**** Data recibida en update_private_chat_files\n sender_nickname: %s\n file_name: %s\n file_size: %s", sender_nickname, file_name, file_size)
-
         if sender_nickname not in self.received_files:
             self.received_files[sender_nickname] = {}
-        self.received_files[sender_nickname][file_name] = file_data
+        
+        if sender_nickname not in self.save_button:
+            self.save_button[sender_nickname] = {}
 
-        self.save_button[file_name] = QPushButton(f"Save Received File {file_name}")
-        self.save_button[file_name].clicked.connect(lambda: self.save_file(sender_nickname, file_name, file_data))
-        self.layout[sender_nickname].layout().addWidget(self.save_button[file_name])
-        self.let_know_sender_i_received_file(sender_nickname, file_name)
+        if file_name not in self.save_button[sender_nickname]:
+            self.save_button[sender_nickname][file_name] = QPushButton(f"Save Received File {file_name}: 1%")
+            self.layout[sender_nickname].layout().addWidget(self.save_button[sender_nickname][file_name])
+
+        if percentage >= 100:# and b":FIN_DEL_ARCHIVO:" in file_data:
+            self.received_files[sender_nickname][file_name] = file_data
+            self.save_button[sender_nickname][file_name].setText(f"Save Received File {file_name}: {percentage}%")
+            self.save_button[sender_nickname][file_name].clicked.connect(lambda: self.save_file(sender_nickname, file_name, file_data))
+            self.let_know_sender_i_received_file(sender_nickname, file_name)
+        else:
+            self.save_button[sender_nickname][file_name].setText(f"Save Received File {file_name}: {percentage}%")
 
     def update_user_list(self):
         """ Actualiza la lista de usuarios conectados. """
@@ -737,7 +744,7 @@ class CheckPrivateIncomingMessagesWorker(QObject):
         self.running = False
 
 class CheckPrivateIncomingFilesWorker(QObject):
-    messageReceived = pyqtSignal(str, str, int, bytearray)  # Emitirá el mensaje recibido
+    messageReceived = pyqtSignal(str, str, int, bytearray, int)  # Emitirá el mensaje recibido
 
     def __init__(self, server, sender_nickname):
         super().__init__()
@@ -757,9 +764,7 @@ class CheckPrivateIncomingFilesWorker(QObject):
                 mensaje, address = self.server.incoming_queue.get(timeout=0.1)
                 # Verificar si es el marcador de fin de archivo
                 if b":FIN_DEL_ARCHIVO:" in mensaje:
-                    logger.debug("Fin de recepción del archivo %s... from: %s", file_name, sender_nickname)
-                    # esto llama a update_private_chat_files
-                    self.messageReceived.emit(sender_nickname, file_name, file_size, file_data)
+                    logger.debug("Fin de envio del archivo %s... from: %s", file_name, sender_nickname)
                     continue
 
                 try:
@@ -785,6 +790,13 @@ class CheckPrivateIncomingFilesWorker(QObject):
                     file_data.extend(mensaje)
                     received_size += len(mensaje)
                     logger.debug("Fragmento/chunk recibido en process_files %s/%s bytes", received_size, file_size)
+                    if received_size == 0:
+                        percentage = 0
+                    else:
+                        percentage = int((received_size / file_size) * 100)
+                    # esto llama a update_private_chat_files
+                    self.messageReceived.emit(sender_nickname, file_name, file_size, file_data, percentage)
+
             except queue.Empty:
                 continue
             except Exception as e:
