@@ -333,7 +333,7 @@ class ChatroomWindows(QWidget):
                 with open(file_path, 'wb') as file:
                     file.write(file_data)
                 logger.debug("Archivo guardado en: %s", file_path)
-                self.text_box[self.sender_nickname].append(f"Archivo {file_name} guardado en {file_path}.")
+                self.text_box[sender_nickname].append(f"Archivo {file_name} guardado en {file_path}.")
             except Exception as e:
                 logger.error(f"Error al guardar el archivo: {e}")
                 self.text_box[sender_nickname].append(f"Error al guardar el archivo {file_name}.")
