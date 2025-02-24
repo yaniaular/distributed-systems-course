@@ -765,11 +765,11 @@ class CheckPrivateIncomingFilesWorker(QObject):
                 # Verificar si es el marcador de fin de archivo
                 if b":FIN_DEL_ARCHIVO:" in mensaje:
                     logger.debug("Fin de envio del archivo %s... from: %s", file_name, sender_nickname)
+                    self.messageReceived.emit(sender_nickname, file_name, file_size, file_data, 100) 
                     continue
 
                 try:
                     decoded_data = mensaje.decode('utf-8')
-
                     logger.debug("Datos recibidos en process_files: %s", decoded_data)
 
                     # Verificar si es el marcador de información del archivo
