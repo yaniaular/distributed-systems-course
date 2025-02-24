@@ -737,7 +737,7 @@ class CheckPrivateIncomingMessagesWorker(QObject):
             except queue.Empty:
                 continue
             except Exception as e:
-                logger.error(f"Error en worker: {e}")
+                logger.error(f"Error en CheckPrivateIncomingMessagesWorker: {e}")
                 break
 
     def stop(self):
@@ -790,7 +790,7 @@ class CheckPrivateIncomingFilesWorker(QObject):
                     file_data.extend(mensaje)
                     received_size += len(mensaje)
                     logger.debug("Fragmento/chunk recibido en process_files %s/%s bytes", received_size, file_size)
-                    if received_size == 0:
+                    if received_size == 0 or file_size == 0:
                         percentage = 0
                     else:
                         percentage = int((received_size / file_size) * 100)
@@ -800,7 +800,7 @@ class CheckPrivateIncomingFilesWorker(QObject):
             except queue.Empty:
                 continue
             except Exception as e:
-                logger.error(f"Error en worker: {e}")
+                logger.error(f"Error en CheckPrivateIncomingFilesWorker: {e}")
                 break
 
     def stop(self):
