@@ -252,6 +252,10 @@ class ChatroomWindows(QWidget):
         self.check_workers = {} # Diccionario para almacenar los workers de cada chat privado
         self.check_threads = {} # Diccionario para almacenar los threads de cada chat privado
 
+        self.layout = {} # Diccionario para almacenar los layout de cada chat privado
+        self.received_files = {} # Diccionario para almacenar los archivos recibidos, key: sender, value: dict of files
+        self.save_button = {} # Diccionario para almacenar los botones de guardar archivo
+
         self.setWindowTitle(f"Chatroom de {self.sender_nickname}")
         self.setGeometry(100, 100, 300, 300)
         self.main_layout = QVBoxLayout()
@@ -286,7 +290,7 @@ class ChatroomWindows(QWidget):
         self.timer.timeout.connect(self.update_user_list)
         self.timer.start(1000)
 
-        self.timer_to_join = QTimer.singleShot(4000, self.send_request_to_join_chatroom)
+        self.timer_to_join = QTimer.singleShot(2000, self.send_request_to_join_chatroom)
 
     def update_group_chat(self, sender_nickname, mensaje):
         # Aquí actualizamos la interfaz de forma segura en el hilo principal
@@ -298,7 +302,7 @@ class ChatroomWindows(QWidget):
         """ Este se llama desde self.messageReceived.emit(mensaje) en CheckPrivateIncomingMessagesWorker """
         # Aquí actualizamos la interfaz de forma segura en el hilo principal
         # Asegúrate de usar la clave correcta, por ejemplo, el nickname del destinatario
-        logger.debug("*************** Mensaje privado recibido: %s", mensaje)
+        logger.debug("Mensaje privado recibido en update_private_chat: %s", mensaje)
         
         sender_nickname = mensaje.split(":")[0]
         check_action = mensaje.split(":")[1]
@@ -317,21 +321,35 @@ class ChatroomWindows(QWidget):
                 self.text_box[sender_nickname].append(f"{sender_nickname}: {mensaje}")
             else:
                 logger.error("No se encontró la clave en text_box")
-    
-    def update_private_chat_files(self, mensaje):
-        """ Este se llama desde self.messageReceived.emit(mensaje) en CheckPrivateIncomingMessagesWorker """
-        logger.debug("*************** Mensaje para ARCHIVO recibido: %s", mensaje)
-        # TODO: aqui se actualizara la barra de progreso
-        if type(mensaje) == bytes:
-        #elif mensaje[0:9].decode('utf-8') == "FRAGMENTO:":
-            # Recibir fragmento del archivo
-            #_, chunk = mensaje[:9], mensaje[9:]
-            logger.debug("Fragmento recibido en update_private_chat: %s", mensaje)
-            #self.text_box[sender_nickname].append(chunk)
-        elif mensaje.startswith("FILE:"):
-            _, file_name, file_size, sender_nickname = mensaje.split(":")
-            file_size = int(file_size)
-            self.text_box[sender_nickname].append(f"Recibiendo archivo [2] {file_name}...")
+
+    def save_file(self, sender_nickname, file_name, file_data):
+        """ Guarda el archivo en la ubicación seleccionada por el usuario """
+        options = QFileDialog.Options()
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Guardar archivo", file_name, "Todos los archivos (*)", options=options
+        )
+        if file_path:
+            try:
+                with open(file_path, 'wb') as file:
+                    file.write(file_data)
+                logger.debug("Archivo guardado en: %s", file_path)
+                self.text_box[self.sender_nickname].append(f"Archivo {file_name} guardado en {file_path}.")
+            except Exception as e:
+                logger.error(f"Error al guardar el archivo: {e}")
+                self.text_box[sender_nickname].append(f"Error al guardar el archivo {file_name}.")
+
+    def update_private_chat_files(self, sender_nickname, file_name, file_size, file_data):
+        """ Este se llama desde self.messageReceived.emit(mensaje) en CheckPrivateIncomingFilesWorker """
+        logger.debug("**** Data recibida en update_private_chat_files\n sender_nickname: %s\n file_name: %s\n file_size: %s", sender_nickname, file_name, file_size)
+
+        if sender_nickname not in self.received_files:
+            self.received_files[sender_nickname] = {}
+        self.received_files[sender_nickname][file_name] = file_data
+
+        self.save_button[file_name] = QPushButton(f"Save Received File {file_name}")
+        self.save_button[file_name].clicked.connect(lambda: self.save_file(sender_nickname, file_name, file_data))
+        self.layout[sender_nickname].layout().addWidget(self.save_button[file_name])
+        self.let_know_sender_i_received_file(sender_nickname, file_name)
 
     def update_user_list(self):
         """ Actualiza la lista de usuarios conectados. """
@@ -395,7 +413,7 @@ class ChatroomWindows(QWidget):
 
             # crear worker para procesar archivos entrantes y actualizar la GUI
             # esto se hizo porque con hilos normales la interfaz se congelaba
-            self.check_workers[recipient_nickname + "files"] = CheckPrivateIncomingMessagesWorker(server, recipient_nickname) # TODO tal vez podemos ahorrarnos esto y solo conectar el process_files
+            self.check_workers[recipient_nickname + "files"] = CheckPrivateIncomingFilesWorker(server, recipient_nickname) # TODO tal vez podemos ahorrarnos esto y solo conectar el process_files
             self.check_threads[recipient_nickname + "files"] = QThread()
             self.check_workers[recipient_nickname + "files"].moveToThread(self.check_threads[recipient_nickname + "files"])
             self.check_workers[recipient_nickname + "files"].messageReceived.connect(self.update_private_chat_files)
@@ -459,7 +477,7 @@ class ChatroomWindows(QWidget):
             user_info.server_listening = server
 
             # crear worker para procesar archivos entrantes y actualizar la GUI
-            self.check_workers[recipient_nickname + "files"] = CheckPrivateIncomingMessagesWorker(server, recipient_nickname)
+            self.check_workers[recipient_nickname + "files"] = CheckPrivateIncomingFilesWorker(server, recipient_nickname)
             self.check_threads[recipient_nickname + "files"] = QThread()
             self.check_workers[recipient_nickname + "files"].moveToThread(self.check_threads[recipient_nickname + "files"])
             self.check_workers[recipient_nickname + "files"].messageReceived.connect(self.update_private_chat_files)
@@ -499,8 +517,13 @@ class ChatroomWindows(QWidget):
         self.group_layout.addWidget(send_button)
         self.group_chat.show()
 
-    def select_and_send_file(self, recipient_nickname):
+    def let_know_sender_i_received_file(self, sender_nickname, file_name):
+        sender_info = USER_INFO_BY_NICKNAME.get(sender_nickname)
+        if sender_info:
+            client_socket = sender_info.client
+            client_socket.send_message(f"Archivo {file_name} enviado satisfactoriamente.")
 
+    def select_and_send_file(self, recipient_nickname):
         logger.debug("Seleccionar archivo para enviar a %s", recipient_nickname)
         file_path, _ = QFileDialog.getOpenFileName()
         if not file_path:
@@ -513,9 +536,10 @@ class ChatroomWindows(QWidget):
         # Enviar metadatos del archivo
         client_socket.send_message(f"FILE:{file_name}:{file_size}")
 
+        self.text_box[recipient_nickname].append(f"Enviando Archivo {file_name}...")
         time.sleep(2) # para que de tiempo de guardar la informacion del size en el recipient
         # Enviar el archivo en fragmentos
-        info_marker = f"INICIO_DEL_ARCHIVO:{file_name}:{file_size}:".encode('utf-8')
+        info_marker = f"INICIO_DEL_ARCHIVO:{file_name}:{file_size}:{self.sender_nickname}".encode('utf-8')
         client_socket_files.send_fragment(info_marker)
         with open(file_path, 'rb') as file:
             while True:
@@ -523,10 +547,7 @@ class ChatroomWindows(QWidget):
                 if not chunk:
                     break
                 client_socket_files.send_fragment(chunk)
-        info_marker = f"FIN_DEL_ARCHIVO:".encode('utf-8')
-        client_socket_files.send_fragment(info_marker)
-
-        self.text_box[recipient_nickname].append(f"Archivo {file_name} enviado.")
+        client_socket_files.send_fragment(b":FIN_DEL_ARCHIVO:")
 
     def create_private_window_chat(self, recipient_nickname: str, sender_nickname: Optional[str] = None):
         if sender_nickname is None:
@@ -546,7 +567,7 @@ class ChatroomWindows(QWidget):
 
             central_widget = QWidget()
             self.chat_windows[recipient_nickname].setCentralWidget(central_widget)
-            layout = QVBoxLayout(central_widget)
+            self.layout[recipient_nickname] = QVBoxLayout(central_widget)
 
             # Frame para el botón de archivos y la barra de progreso
             frame_archivo = QWidget()
@@ -562,13 +583,13 @@ class ChatroomWindows(QWidget):
             self.progress_bar[recipient_nickname].setValue(0)
             frame_archivo.layout().addWidget(self.progress_bar[recipient_nickname])
 
-            layout.addWidget(frame_archivo)
+            self.layout[recipient_nickname].addWidget(frame_archivo)
 
             # Área de visualización de mensajes
             self.text_box[recipient_nickname] = QTextEdit(self.chat_windows[recipient_nickname])
             self.text_box[recipient_nickname].setReadOnly(True)
             self.text_box[recipient_nickname].setFont(self.get_font(12))
-            layout.addWidget(self.text_box[recipient_nickname])
+            self.layout[recipient_nickname].addWidget(self.text_box[recipient_nickname])
 
             # Cuadro de texto para escribir mensajes
             frame_entrada = QWidget()
@@ -584,7 +605,7 @@ class ChatroomWindows(QWidget):
             btn_enviar.clicked.connect(lambda: self.send_private_message(recipient_nickname))
             frame_entrada.layout().addWidget(btn_enviar)
 
-            layout.addWidget(frame_entrada)
+            self.layout[recipient_nickname].addWidget(frame_entrada)
 
             user_info.private_chat = self.chat_windows[recipient_nickname]
             user_info.visual_chat = self.text_box[recipient_nickname]
@@ -646,7 +667,6 @@ class ChatroomWindows(QWidget):
         message = f"{action}:{sender}:{recipient}:{sender_ip}:{sender_port}"
         self.send_message_orchestrator(message)
 
-
     def send_request_to_create_tcp_client_files(self, recipient_nickname, port):
         """ This method send a request to create a tcp client in the recipient side
         """
@@ -698,7 +718,7 @@ class CheckPrivateIncomingMessagesWorker(QObject):
         self.server = server
         self.sender_nickname = sender_nickname
         self.running = True
-        logger.info("************ Worker creado para %s", sender_nickname)
+        logger.info("************ CheckPrivateIncomingMessagesWorker creado para %s", sender_nickname)
 
     def process_messages(self):
         while self.running:
@@ -713,36 +733,58 @@ class CheckPrivateIncomingMessagesWorker(QObject):
                 logger.error(f"Error en worker: {e}")
                 break
 
+    def stop(self):
+        self.running = False
+
+class CheckPrivateIncomingFilesWorker(QObject):
+    messageReceived = pyqtSignal(str, str, int, bytearray)  # Emitirá el mensaje recibido
+
+    def __init__(self, server, sender_nickname):
+        super().__init__()
+        self.server = server
+        self.sender_nickname = sender_nickname
+        self.running = True
+        logger.info("************ CheckPrivateIncomingFilesWorker creado para %s", sender_nickname)
+
     def process_files(self):
+        file_size = 0
+        received_size = 0
+        file_data = bytearray()
+        sender_nickname = ""
+        file_name = ""
         while self.running:
             try:
                 mensaje, address = self.server.incoming_queue.get(timeout=0.1)
+                # Verificar si es el marcador de fin de archivo
+                if b":FIN_DEL_ARCHIVO:" in mensaje:
+                    logger.debug("Fin de recepción del archivo %s... from: %s", file_name, sender_nickname)
+                    # esto llama a update_private_chat_files
+                    self.messageReceived.emit(sender_nickname, file_name, file_size, file_data)
+                    continue
 
-
-                # Decodificar los datos recibidos
                 try:
                     decoded_data = mensaje.decode('utf-8')
+
+                    logger.debug("Datos recibidos en process_files: %s", decoded_data)
 
                     # Verificar si es el marcador de información del archivo
                     if decoded_data.startswith("INICIO_DEL_ARCHIVO:"):
                         parts = decoded_data.split(":")
-                        if len(parts) >= 3:
+                        if len(parts) >= 4:
+                            received_size = 0
+                            file_data = bytearray()
                             file_name = parts[1]  # Nombre del archivo
                             file_size = int(parts[2])  # Tamaño del archivo
-                            remaining_bytes = file_size  # Bytes restantes por recibir
+                            sender_nickname = parts[3]  # Nickname del remitente
 
                             # Abrir el archivo para escritura
-                            logger.debug("Recibiendo archivo %s... remaining bytes %s", file_name, remaining_bytes)
-
-                    # Verificar si es el marcador de fin de archivo
-                    if decoded_data.startswith("FIN_DEL_ARCHIVO:"):
-                        logger.debug("Fin de recepción del archivo %s... from address: %s", file_name, address)
+                            logger.debug("Datos recibidos\nNombre: %s\nTamaño: %s\nRemitente: %s", file_name, file_size, sender_nickname)
 
                 except UnicodeDecodeError:
                     # Si no se puede decodificar, es un chunk binario
-                    # logger.debug("Fragmento recibido en process_files: %s", mensaje)
-                    logger.debug("Fragmento/chuck recibido en process_files")
-                #self.messageReceived.emit(mensaje) # esto llama a update_private_chat_files
+                    file_data.extend(mensaje)
+                    received_size += len(mensaje)
+                    logger.debug("Fragmento/chunk recibido en process_files %s/%s bytes", received_size, file_size)
             except queue.Empty:
                 continue
             except Exception as e:
@@ -751,6 +793,7 @@ class CheckPrivateIncomingMessagesWorker(QObject):
 
     def stop(self):
         self.running = False
+
 
 class NicknameWindow(QMainWindow):
     """ Ventana secundaria para ingresar el nickname. """
