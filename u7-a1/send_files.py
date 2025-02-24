@@ -233,7 +233,7 @@ class ClientTCP:
     
     def send_fragment(self, file_data):
         # este se usa desde user_info.client_files
-        logger.debug("Enviando fragmento de archivo... %s", file_data)
+        # logger.debug("Enviando fragmento de archivo... %s", file_data)
         self.client_socket.sendall(file_data)
 
     def close(self):
@@ -764,8 +764,8 @@ class CheckPrivateIncomingFilesWorker(QObject):
                 mensaje, address = self.server.incoming_queue.get(timeout=0.1)
                 # Verificar si es el marcador de fin de archivo
                 if b":FIN_DEL_ARCHIVO:" in mensaje:
-                    logger.debug("Fin de envio del archivo %s... from: %s", file_name, sender_nickname)
-                    self.messageReceived.emit(sender_nickname, file_name, file_size, file_data, 100) 
+                    logger.debug("Fin de envio del archivo %s... from: %s", file_name, self.sender_nickname)
+                    self.messageReceived.emit(self.sender_nickname, file_name, file_size, file_data, 100) 
                     continue
 
                 try:
@@ -783,7 +783,7 @@ class CheckPrivateIncomingFilesWorker(QObject):
                             sender_nickname = parts[3]  # Nickname del remitente
 
                             # Abrir el archivo para escritura
-                            logger.debug("Datos recibidos\nNombre: %s\nTamaño: %s\nRemitente: %s", file_name, file_size, sender_nickname)
+                            logger.debug("Datos recibidos\nNombre: %s\nTamaño: %s\nRemitente: %s", file_name, file_size, self.sender_nickname)
 
                 except UnicodeDecodeError:
                     # Si no se puede decodificar, es un chunk binario
