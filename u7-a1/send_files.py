@@ -14,7 +14,7 @@ from PyQt5.QtCore import QTimer, Qt, QObject, pyqtSignal, QThread
 from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget, QMessageBox,
-    QLabel, QLineEdit, QTextEdit, QHBoxLayout, QListWidget, QListWidgetItem
+    QLabel, QLineEdit, QTextEdit, QHBoxLayout, QListWidget, QListWidgetItem, QFileDialog, QProgressBar
 )
 
 USER_INFO_BY_NICKNAME = {} # información de los usuarios conectados
@@ -138,6 +138,7 @@ class ServerTCP:
                  name: str,
                  ip: str,
                  port: int,
+                 type_of_data_to_receive: str = "TEXT",
                  buffer_size: Optional[int] = 1024,
                  maximum_connections: Optional[int] = 10):
         logger.info("Configurando servidor...")
@@ -149,13 +150,16 @@ class ServerTCP:
         self.address = (ip, self.port)
         self.buffer_size = buffer_size
         self.maximum_connections = maximum_connections
+        self.type_of_data_to_receive = type_of_data_to_receive
         self.stop_event = multiprocessing.Event() # Bandera para detener el proceso
         self.server_thread = multiprocessing.Process(
             target=self.server_process,
             args=(self.incoming_queue,
                   self.address,
+                  self.type_of_data_to_receive,
                   self.buffer_size,
-                  self.maximum_connections),
+                  self.maximum_connections,
+                  ),
             daemon=True
         )
 
@@ -164,7 +168,7 @@ class ServerTCP:
         self.server_thread.start()
 
     @staticmethod
-    def server_process(incoming_queue, address, buffer_size, maximum_connections):
+    def server_process(incoming_queue, address, type_of_data_to_receive, buffer_size, maximum_connections):
         server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server_socket.bind(address)
         server_socket.listen(maximum_connections)
@@ -176,10 +180,15 @@ class ServerTCP:
             while True:
                 data = conn.recv(buffer_size)
                 if data:
-                    msg = data.decode('utf-8')
-                    decrypted_msg = caesar_decrypt(msg, SHIFT)
-                    incoming_queue.put((decrypted_msg, addr))
-                    logger.info("Mensaje recibido de %s: %s", str(addr), str(decrypted_msg))
+                    if type_of_data_to_receive == "TEXT":
+                        msg = data.decode('utf-8')
+                        decrypted_msg = caesar_decrypt(msg, SHIFT)
+                        incoming_queue.put((decrypted_msg, addr))
+                        logger.info("Mensaje recibido de %s: %s", str(addr), str(decrypted_msg))
+                    else:
+                        # logger.debug("Recibido fragmento en server_process")
+                        # TODO: hacer algo con el fragmento
+                        incoming_queue.put((data, addr))
                     ack = "ACK"
                     ack_encrypted = caesar_encrypt(ack, SHIFT)
                     conn.send(ack_encrypted.encode())
@@ -213,6 +222,7 @@ class ClientTCP:
         logger.info("Conexión establecida con el servidor!")
 
     def send_message(self, message: str):
+        # este se usa desde user_info.client
         encrypted_message = caesar_encrypt(message, SHIFT)
         self.client_socket.send(encrypted_message.encode())
         data = self.client_socket.recv(self.buffer_size).decode()
@@ -220,6 +230,11 @@ class ClientTCP:
         if decrypted_data == "ACK":
             logger.info("Mensaje enviado correctamente.")
         return decrypted_data
+    
+    def send_fragment(self, file_data):
+        # este se usa desde user_info.client_files
+        logger.debug("Enviando fragmento de archivo... %s", file_data)
+        self.client_socket.sendall(file_data)
 
     def close(self):
         self.client_socket.close()
@@ -232,6 +247,8 @@ class ChatroomWindows(QWidget):
         self.chat_windows = {} # Diccionario para almacenar las ventanas de cada chat privado
         self.text_box = {} # Diccionario para almacenar los QTextEdit de cada chat privado
         self.entry_message = {} # Diccionario para almacenar los QLineEdit de cada chat privado
+        self.file_button = {} # Diccionario para almacenar los QPushButton de cada chat privado
+        self.progress_bar = {} # Diccionario para almacenar los QProgressBar de cada chat privado
         self.check_workers = {} # Diccionario para almacenar los workers de cada chat privado
         self.check_threads = {} # Diccionario para almacenar los threads de cada chat privado
 
@@ -269,7 +286,7 @@ class ChatroomWindows(QWidget):
         self.timer.timeout.connect(self.update_user_list)
         self.timer.start(1000)
 
-        self.timer_to_join = QTimer.singleShot(5000, self.send_request_to_join_chatroom)
+        self.timer_to_join = QTimer.singleShot(4000, self.send_request_to_join_chatroom)
 
     def update_group_chat(self, sender_nickname, mensaje):
         # Aquí actualizamos la interfaz de forma segura en el hilo principal
@@ -278,14 +295,43 @@ class ChatroomWindows(QWidget):
         #self.chat_display.append(f"{sender_nickname}: {mensaje}")
 
     def update_private_chat(self, mensaje):
+        """ Este se llama desde self.messageReceived.emit(mensaje) en CheckPrivateIncomingMessagesWorker """
         # Aquí actualizamos la interfaz de forma segura en el hilo principal
         # Asegúrate de usar la clave correcta, por ejemplo, el nickname del destinatario
-        sender_nickname, mensaje = mensaje.split(":")
-        logger.debug("Mensaje recibido de %s: %s", sender_nickname, mensaje)
-        if sender_nickname in self.text_box:
-            self.text_box[sender_nickname].append(f"{sender_nickname}: {mensaje}")
+        logger.debug("*************** Mensaje privado recibido: %s", mensaje)
+        
+        sender_nickname = mensaje.split(":")[0]
+        check_action = mensaje.split(":")[1]
+        if check_action == "FILE":
+            sender_nickname, _, file_name, file_size = mensaje.split(":")
+            file_size = int(file_size)
+            if sender_nickname in self.text_box:
+                self.text_box[sender_nickname].append(f"{sender_nickname}: Recibiendo archivo [1] {file_name}...")
+            else:
+                logger.error("No se encontró la clave en text_box")
+            # TODO: Hacer algo en la interfaz para mostrar que se está recibiendo un archivo
         else:
-            logger.error("No se encontró la clave en text_box")
+            mensaje = check_action
+            logger.debug("Mensaje recibido de %s: %s", sender_nickname, mensaje)
+            if sender_nickname in self.text_box:
+                self.text_box[sender_nickname].append(f"{sender_nickname}: {mensaje}")
+            else:
+                logger.error("No se encontró la clave en text_box")
+    
+    def update_private_chat_files(self, mensaje):
+        """ Este se llama desde self.messageReceived.emit(mensaje) en CheckPrivateIncomingMessagesWorker """
+        logger.debug("*************** Mensaje para ARCHIVO recibido: %s", mensaje)
+        # TODO: aqui se actualizara la barra de progreso
+        if type(mensaje) == bytes:
+        #elif mensaje[0:9].decode('utf-8') == "FRAGMENTO:":
+            # Recibir fragmento del archivo
+            #_, chunk = mensaje[:9], mensaje[9:]
+            logger.debug("Fragmento recibido en update_private_chat: %s", mensaje)
+            #self.text_box[sender_nickname].append(chunk)
+        elif mensaje.startswith("FILE:"):
+            _, file_name, file_size, sender_nickname = mensaje.split(":")
+            file_size = int(file_size)
+            self.text_box[sender_nickname].append(f"Recibiendo archivo [2] {file_name}...")
 
     def update_user_list(self):
         """ Actualiza la lista de usuarios conectados. """
@@ -322,7 +368,7 @@ class ChatroomWindows(QWidget):
             self.check_threads[recipient_nickname] = QThread()
             self.check_workers[recipient_nickname].moveToThread(self.check_threads[recipient_nickname])
             self.check_workers[recipient_nickname].messageReceived.connect(self.update_private_chat)
-            self.check_threads[recipient_nickname].started.connect(self.check_workers[recipient_nickname].process)
+            self.check_threads[recipient_nickname].started.connect(self.check_workers[recipient_nickname].process_messages)
             self.check_threads[recipient_nickname].start()
 
             # esperar un segundo para que el server se inicie
@@ -337,6 +383,37 @@ class ChatroomWindows(QWidget):
             # para que cree uno
             if user_info.client is None:
                 self.send_request_to_create_tcp_server(recipient_nickname)
+
+        # crear servidor para recibir archivos de la persona con la que quiero chatear
+        if user_info.server_listening_files is None:
+            # si el sender no tiene un servidor tcp para recibir archivos del recipient, hay que crearlo
+            logger.debug("creando server para recibir archivos de %s", recipient_nickname)
+            port = get_free_port()
+            server = ServerTCP(f"server_of_{self.sender_nickname}_to_receive_files_from_{recipient_nickname}", get_ip_local(), port, "FILES")
+            server.start()
+            user_info.server_listening_files = server
+
+            # crear worker para procesar archivos entrantes y actualizar la GUI
+            # esto se hizo porque con hilos normales la interfaz se congelaba
+            self.check_workers[recipient_nickname + "files"] = CheckPrivateIncomingMessagesWorker(server, recipient_nickname) # TODO tal vez podemos ahorrarnos esto y solo conectar el process_files
+            self.check_threads[recipient_nickname + "files"] = QThread()
+            self.check_workers[recipient_nickname + "files"].moveToThread(self.check_threads[recipient_nickname + "files"])
+            self.check_workers[recipient_nickname + "files"].messageReceived.connect(self.update_private_chat_files)
+            self.check_threads[recipient_nickname + "files"].started.connect(self.check_workers[recipient_nickname + "files"].process_files)
+            self.check_threads[recipient_nickname + "files"].start()
+
+            # esperar un segundo para que el server se inicie
+            time.sleep(1)
+
+            # si el recipient no tiene un cliente para escribirnos hay
+            # que enviarle una solicitud al recipient para que cree uno
+            self.send_request_to_create_tcp_client_files(recipient_nickname, port) # TODO: revisar si es necesario
+               
+            # si el recipient no tiene un servidor tcp para recibir archivos
+            # de este sender, hay que enviarle una solicitud al recipient
+            # para que cree uno
+            if user_info.client_files is None:
+                self.send_request_to_create_tcp_server_files(recipient_nickname)
 
     def open_chat_in_recipient_side(self, recipient_nickname, sender_nickname = None):
         if sender_nickname is None:
@@ -362,7 +439,7 @@ class ChatroomWindows(QWidget):
             self.check_threads[recipient_nickname] = QThread()
             self.check_workers[recipient_nickname].moveToThread(self.check_threads[recipient_nickname])
             self.check_workers[recipient_nickname].messageReceived.connect(self.update_private_chat)
-            self.check_threads[recipient_nickname].started.connect(self.check_workers[recipient_nickname].process)
+            self.check_threads[recipient_nickname].started.connect(self.check_workers[recipient_nickname].process_messages)
             self.check_threads[recipient_nickname].start()
 
             # esperar un segundo para que el server se inicie
@@ -371,6 +448,30 @@ class ChatroomWindows(QWidget):
             # si el recipient no tiene un cliente para escribirnos hay
             # que enviarle una solicitud al recipient para que cree uno
             self.send_request_to_create_tcp_client(recipient_nickname, port)
+
+        # crear servidor para recibir archivos de la persona con la que quiero chatear
+        if user_info.server_listening_files is None:
+            # si el sender no tiene un servidor tcp para recibir archivos del recipient, hay que crearlo
+            logger.debug("creando server para recibir archivos de %s", recipient_nickname)
+            port = get_free_port()
+            server = ServerTCP(f"server_of_{self.sender_nickname}_to_receive_files_from_{recipient_nickname}", get_ip_local(), port, "FILES")
+            server.start()
+            user_info.server_listening = server
+
+            # crear worker para procesar archivos entrantes y actualizar la GUI
+            self.check_workers[recipient_nickname + "files"] = CheckPrivateIncomingMessagesWorker(server, recipient_nickname)
+            self.check_threads[recipient_nickname + "files"] = QThread()
+            self.check_workers[recipient_nickname + "files"].moveToThread(self.check_threads[recipient_nickname + "files"])
+            self.check_workers[recipient_nickname + "files"].messageReceived.connect(self.update_private_chat_files)
+            self.check_threads[recipient_nickname + "files"].started.connect(self.check_workers[recipient_nickname + "files"].process_files)
+            self.check_threads[recipient_nickname + "files"].start()
+
+            # esperar un segundo para que el server se inicie
+            time.sleep(1)
+
+            # si el recipient no tiene un cliente para escribirnos hay
+            # que enviarle una solicitud al recipient para que cree uno
+            self.send_request_to_create_tcp_client_files(recipient_nickname, port) # TODO: revisar si es necesario
 
     def create_window_group(self):
         # Crear una nueva ventana para el chat
@@ -398,6 +499,35 @@ class ChatroomWindows(QWidget):
         self.group_layout.addWidget(send_button)
         self.group_chat.show()
 
+    def select_and_send_file(self, recipient_nickname):
+
+        logger.debug("Seleccionar archivo para enviar a %s", recipient_nickname)
+        file_path, _ = QFileDialog.getOpenFileName()
+        if not file_path:
+            return
+        file_name = os.path.basename(file_path)
+        file_size = os.path.getsize(file_path)
+
+        client_socket = USER_INFO_BY_NICKNAME[recipient_nickname].client
+        client_socket_files = USER_INFO_BY_NICKNAME[recipient_nickname].client_files
+        # Enviar metadatos del archivo
+        client_socket.send_message(f"FILE:{file_name}:{file_size}")
+
+        time.sleep(2) # para que de tiempo de guardar la informacion del size en el recipient
+        # Enviar el archivo en fragmentos
+        info_marker = f"INICIO_DEL_ARCHIVO:{file_name}:{file_size}:".encode('utf-8')
+        client_socket_files.send_fragment(info_marker)
+        with open(file_path, 'rb') as file:
+            while True:
+                chunk = file.read(1024)
+                if not chunk:
+                    break
+                client_socket_files.send_fragment(chunk)
+        info_marker = f"FIN_DEL_ARCHIVO:".encode('utf-8')
+        client_socket_files.send_fragment(info_marker)
+
+        self.text_box[recipient_nickname].append(f"Archivo {file_name} enviado.")
+
     def create_private_window_chat(self, recipient_nickname: str, sender_nickname: Optional[str] = None):
         if sender_nickname is None:
             sender_nickname = self.sender_nickname
@@ -417,6 +547,22 @@ class ChatroomWindows(QWidget):
             central_widget = QWidget()
             self.chat_windows[recipient_nickname].setCentralWidget(central_widget)
             layout = QVBoxLayout(central_widget)
+
+            # Frame para el botón de archivos y la barra de progreso
+            frame_archivo = QWidget()
+            frame_archivo.setLayout(QHBoxLayout())
+
+            # Boton para mandar archivos
+            self.file_button[recipient_nickname] = QPushButton("Send File")
+            self.file_button[recipient_nickname].clicked.connect(lambda: self.select_and_send_file(recipient_nickname))
+            frame_archivo.layout().addWidget(self.file_button[recipient_nickname])
+
+            # Barra de progreso
+            self.progress_bar[recipient_nickname] = QProgressBar()
+            self.progress_bar[recipient_nickname].setValue(0)
+            frame_archivo.layout().addWidget(self.progress_bar[recipient_nickname])
+
+            layout.addWidget(frame_archivo)
 
             # Área de visualización de mensajes
             self.text_box[recipient_nickname] = QTextEdit(self.chat_windows[recipient_nickname])
@@ -480,10 +626,31 @@ class ChatroomWindows(QWidget):
         message = f"{action}:{sender}:{recipient}"
         self.send_message_orchestrator(message)
 
+    def send_request_to_create_tcp_server_files(self, recipient_nickname):
+        """ This method send a request to create a tcp server in the recipient side
+        """
+        action = "CREATE_TCP_SERVER_FILES"
+        sender = self.sender_nickname
+        recipient = recipient_nickname
+        message = f"{action}:{sender}:{recipient}"
+        self.send_message_orchestrator(message)
+
     def send_request_to_create_tcp_client(self, recipient_nickname, port):
         """ This method send a request to create a tcp client in the recipient side
         """
         action = "CREATE_TCP_CLIENT"
+        sender = self.sender_nickname
+        recipient = recipient_nickname
+        sender_ip = MY_IP
+        sender_port = port
+        message = f"{action}:{sender}:{recipient}:{sender_ip}:{sender_port}"
+        self.send_message_orchestrator(message)
+
+
+    def send_request_to_create_tcp_client_files(self, recipient_nickname, port):
+        """ This method send a request to create a tcp client in the recipient side
+        """
+        action = "CREATE_TCP_CLIENT_FILES"
         sender = self.sender_nickname
         recipient = recipient_nickname
         sender_ip = MY_IP
@@ -533,13 +700,49 @@ class CheckPrivateIncomingMessagesWorker(QObject):
         self.running = True
         logger.info("************ Worker creado para %s", sender_nickname)
 
-    def process(self):
+    def process_messages(self):
         while self.running:
             try:
                 mensaje, address = self.server.incoming_queue.get(timeout=0.1) # TODO: guardar el address
-                logger.debug("Mensaje recibido en worker: %s", mensaje)
+                logger.debug("Mensaje recibido en worker process_messages: %s", mensaje)
                 # Emitir el mensaje recibido para actualizar la GUI en el hilo principal
                 self.messageReceived.emit(f"{self.sender_nickname}:{mensaje}")
+            except queue.Empty:
+                continue
+            except Exception as e:
+                logger.error(f"Error en worker: {e}")
+                break
+
+    def process_files(self):
+        while self.running:
+            try:
+                mensaje, address = self.server.incoming_queue.get(timeout=0.1)
+
+
+                # Decodificar los datos recibidos
+                try:
+                    decoded_data = mensaje.decode('utf-8')
+
+                    # Verificar si es el marcador de información del archivo
+                    if decoded_data.startswith("INICIO_DEL_ARCHIVO:"):
+                        parts = decoded_data.split(":")
+                        if len(parts) >= 3:
+                            file_name = parts[1]  # Nombre del archivo
+                            file_size = int(parts[2])  # Tamaño del archivo
+                            remaining_bytes = file_size  # Bytes restantes por recibir
+
+                            # Abrir el archivo para escritura
+                            logger.debug("Recibiendo archivo %s... remaining bytes %s", file_name, remaining_bytes)
+
+                    # Verificar si es el marcador de fin de archivo
+                    if decoded_data.startswith("FIN_DEL_ARCHIVO:"):
+                        logger.debug("Fin de recepción del archivo %s... from address: %s", file_name, address)
+
+                except UnicodeDecodeError:
+                    # Si no se puede decodificar, es un chunk binario
+                    # logger.debug("Fragmento recibido en process_files: %s", mensaje)
+                    logger.debug("Fragmento/chuck recibido en process_files")
+                #self.messageReceived.emit(mensaje) # esto llama a update_private_chat_files
             except queue.Empty:
                 continue
             except Exception as e:
@@ -646,8 +849,10 @@ class UserInfo:
     def __init__(self, nickname: str):
         self.nickname = nickname
         self.server_listening = None # servidor tcp para recibir mensajes de este usuario
+        self.server_listening_files = None # servidor tcp para recibir archivos de este usuario
         self.check_incoming_messages = None # hilo para revisar mensajes que esten en la cola
         self.client = None # cliente tcp para enviar mensajes a este usuario
+        self.client_files = None # cliente tcp para enviar archivos a este usuario
         self.private_chat = None # ventana de chat privado con este usuario es de tipo QMainWindow
         self.visual_chat = None # es el area donde se ven los mensajes en la ventana de chat privado con este usuario
         self.entry_message = None # es el area para escribir mis mensajes en la ventana de chat privado con este usuario
@@ -681,7 +886,7 @@ class IncomingMessageOrchestrator(QObject):
                 socket.IPPROTO_IP,
                 socket.IP_MULTICAST_IF,
                 socket.inet_aton(local_ip)
-)
+            )
         if operating_system != "Windows":
             self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
         
@@ -703,7 +908,7 @@ class IncomingMessageOrchestrator(QObject):
         except Exception as e:
             logger.error("[ERROR] %s", e)
 
-    def process(self):
+    def process_orchestrator(self):
         logger.debug("[MulticastReceiver] Iniciando proceso de escucha...")
         while self.running:
             try:
@@ -752,6 +957,8 @@ def handle_incoming_message(arguments, is_master):
                 USER_INFO_BY_NICKNAME[sender_nickname] = UserInfo(sender_nickname)
                 user_info = USER_INFO_BY_NICKNAME[sender_nickname]
             # NOTA: se llama al método desde el hilo principal, ya que este slot se ejecuta en el main thread.
+            # TODO: separar la lógica de open_chat_in_recipient_side para que tenga la propia de files
+            # y ese nuevo llamarlo desde CREATE_TCP_SERVER_FILES
             MY_CHATROOM.open_chat_in_recipient_side(recipient_nickname=sender_nickname, sender_nickname=recipient_nickname)
     elif action == "CREATE_TCP_CLIENT":
         recipient_nickname = arguments[2]
@@ -778,6 +985,23 @@ def handle_incoming_message(arguments, is_master):
     elif action == "SEND_GROUP_MESSAGE":
         message = arguments[2]
         MY_CHATROOM.update_group_chat(sender_nickname, message)
+    elif action == "CREATE_TCP_SERVER_FILES":
+        # creo que no es necesario hacer nada aquí
+        # tendria que separa la logica de open_chat_in_recipient_side
+        pass
+    elif action == "CREATE_TCP_CLIENT_FILES":
+        recipient_nickname = arguments[2]
+        if recipient_nickname == MY_NICKNAME:
+            sender_ip = arguments[3]
+            sender_port = int(arguments[4])
+            user_info = USER_INFO_BY_NICKNAME.get(sender_nickname)
+            if not user_info:
+                USER_INFO_BY_NICKNAME[sender_nickname] = UserInfo(sender_nickname)
+                user_info = USER_INFO_BY_NICKNAME[sender_nickname]
+            if user_info.client_files is None:
+                print(f"Intentando crear cliente para enviar mensajes a {sender_nickname} - {sender_ip}:{sender_port}")
+                client_socket_files = ClientTCP(f"client_of_{recipient_nickname}_to_send_files_to_{sender_nickname}", sender_ip, sender_port)
+                user_info.client_files = client_socket_files
         
 
 
@@ -805,7 +1029,7 @@ def main():
     WORKER_ORCHESTRATOR.moveToThread(THREAD_ORCHESTRATOR)
     # Conectar la señal del worker a un slot que se encargue de actualizar la GUI
     WORKER_ORCHESTRATOR.messageReceived.connect(handle_incoming_message)
-    THREAD_ORCHESTRATOR.started.connect(WORKER_ORCHESTRATOR.process)
+    THREAD_ORCHESTRATOR.started.connect(WORKER_ORCHESTRATOR.process_orchestrator)
     THREAD_ORCHESTRATOR.start()
 
     app = QApplication(sys.argv)
