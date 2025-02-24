@@ -1,7 +1,7 @@
 import psutil
 
 # Puertos objetivo
-PUERTOS_OBJETIVO = {30000, 30001}
+PUERTOS_OBJETIVO = {30000, 30001, 30002, 30003, 30004, 30005, 30006, 30007, 30008, 30009, 40000, 40001, 40002, 40003, 40004, 40005, 40006, 40007, 40008, 40009}
 
 def matar_procesos_por_puertos(puertos):
     procesos_matados = set()
