@@ -5,6 +5,12 @@ import sys
 from PyQt5.QtCore import Qt, QTimer
 
 
+import sys
+import vlc
+from PyQt5.QtWidgets import QApplication, QMainWindow, QLabel, QVBoxLayout, QWidget
+from PyQt5.QtCore import QTimer
+
+
 class Player(QWidget):
     """Un reproductor de video usando VLC y Qt."""
     def __init__(self, parent=None):
@@ -25,8 +31,16 @@ class Player(QWidget):
         self.positionslider.sliderMoved.connect(self.setPosition)
 
         # Etiqueta para mostrar el tiempo
-        #self.time_label = QLabel("00:00 / 00:00", self)
-        #self.time_label.setAlignment(Qt.AlignCenter)
+        self.time_label = QLabel("00:00 / 00:00", self)
+        self.time_label.setStyleSheet("""
+            font-size: 10px;  /* Tamaño de la fuente */
+            padding: 2px;    /* Padding interno reducido */
+            margin: 0px;      /* Margen externo reducido */
+        """)
+        # Forzar un tamaño mínimo y máximo para el QLabel
+        self.time_label.setMinimumSize(50, 15)  # Ancho mínimo de 100px, alto mínimo de 30px
+        self.time_label.setMaximumSize(100, 20)  # Ancho máximo de 200px, alto máximo de 40px
+        self.time_label.setAlignment(Qt.AlignRight)  # Alinear el texto a la derecha
 
         self.playbutton = QPushButton("Play", self)
         self.stopbutton = QPushButton("Stop", self)
@@ -36,13 +50,13 @@ class Player(QWidget):
         hbox.addWidget(self.playbutton)
         hbox.addWidget(self.stopbutton)
 
-        vbox = QVBoxLayout()
-        vbox.addWidget(self.videoframe)
-        vbox.addWidget(self.positionslider)
-        #vbox.addWidget(self.time_label)  # Agregar la etiqueta de tiempo
-        vbox.addLayout(hbox)
+        self.vbox = QVBoxLayout()
+        self.vbox.addWidget(self.videoframe)
+        self.vbox.addWidget(self.positionslider)
+        self.vbox.addWidget(self.time_label)
+        self.vbox.addLayout(hbox)
 
-        self.setLayout(vbox)
+        self.setLayout(self.vbox)
 
         # Conectar señales
         self.playbutton.clicked.connect(self.PlayPause)
@@ -51,6 +65,10 @@ class Player(QWidget):
         self.timer = QTimer(self)
         self.timer.setInterval(200)
         self.timer.timeout.connect(self.updateUI)
+
+        self.timer = QTimer(self)
+        self.timer.setInterval(100) # son en segundos: 1000 ms = 1 segundo
+        self.timer.timeout.connect(self.updateTimeLabel)
 
     def PlayPause(self):
         """Alternar entre play/pause."""
@@ -76,6 +94,28 @@ class Player(QWidget):
         """Establecer la posición."""
         self.mediaplayer.set_position(position / 1000.0)
 
+    def ms_to_time_str(self, milliseconds):
+        """Convertir milisegundos a una cadena en formato minutos:segundos."""
+        if milliseconds == -1:
+            return "00:00"
+
+        seconds = milliseconds // 1000
+        minutes = seconds // 60
+        seconds = seconds % 60
+        return f"{minutes:02}:{seconds:02}"
+
+    def updateTimeLabel(self):
+        """Actualizar el tiempo en el QLabel."""
+        current_time = self.mediaplayer.get_time()  # Tiempo actual en milisegundos
+        total_time = self.mediaplayer.get_length()  # Duración total en milisegundos
+
+        # Convertir a formato minutos:segundos
+        current_time_str = self.ms_to_time_str(current_time)
+        total_time_str = self.ms_to_time_str(total_time)
+
+        # Actualizar el QLabel
+        self.time_label.setText(f"{current_time_str} / {total_time_str}")
+
     def OpenFile(self, filename):
         """Abrir un archivo de video."""
         # create the media
@@ -84,7 +124,6 @@ class Player(QWidget):
 
         self.media = self.instance.media_new(filename)
         self.mediaplayer.set_media(self.media)
-
 
         # parse the metadata of the file
         self.media.parse()
@@ -103,15 +142,19 @@ class Player(QWidget):
         if sys.platform == "darwin": # for MacOS
             self.mediaplayer.set_nsobject(int(self.videoframe.winId()))
 
-        time.sleep(1)
+        self.PlayPause()
+
+        # Esperar a que el video se cargue completamente para revisar la duracion
+        while self.mediaplayer.get_state() != vlc.State.Playing:
+            time.sleep(0.1)  # Esperar hasta que el video esté en estado "Playing"
+
         # Obtener la duración del video en milisegundos
         duration_ms = self.mediaplayer.get_length()
         seconds = duration_ms / 1000  # Convertir milisegundos a segundos
         minutes = seconds / 60        # Convertir segundos a minutos
         duration_minutes = round(minutes, 2)
-        print("**** Current time of the video:", duration_minutes)
-
-        self.PlayPause()
+        print(f"**** Current time of the video: {duration_minutes} minutes")
+        self.updateTimeLabel()
 
     def format_time(self, milliseconds):
         """Formatear el tiempo en minutos y segundos."""
