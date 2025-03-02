@@ -37,3 +37,22 @@ Traceback (most recent call last):
 OSError: [Errno 48] Address already in use
 2025-03-01 23:05:55,095 - App principal - INFO - ************ CheckPrivateIncomingMessagesWorker creado para paco
 2025-03-01 23:05:55,097 - App principal - DEBUG - Esperando 2 SEGUNDOS a que el Worker de mensajes se inicie antes de solicitar el cliente...
+
+
+
+
+
+
+
+
+
+
+
+
+2025-03-02 13:43:16,519 - App principal - DEBUG - **handle_incoming_message** [Recibido en None] JOIN_CHATROOM de yani
+Traceback (most recent call last):
+  File "/Users/yanina/Documents/Maestria Big Data/Sistemas Distribuidos/u8-a1/send_files.py", line 1331, in handle_incoming_message
+    MY_CHATROOM.update_user_list()
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'NoneType' object has no attribute 'update_user_list'
+zsh: abort      python3 send_files.py slave 30001

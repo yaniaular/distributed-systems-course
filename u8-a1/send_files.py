@@ -10,6 +10,11 @@ import struct
 import errno
 import shutil
 import platform
+from player import Player  # Importa la clase Player desde tu archivo
+
+import pyglet
+import ffmpeg
+import vlc
 from typing import Optional, Dict
 from PyQt5.QtCore import QTimer, Qt, QObject, pyqtSignal, QThread
 from PyQt5.QtGui import QFont
@@ -191,6 +196,7 @@ class ServerTCP:
                         conn.sendall(ack_encrypted.encode('utf-8'))
                     else:
                         # logger.debug("Recibido fragmento en server_process")
+                        # time.sleep(0.005)
                         incoming_queue.put((data, addr))
                         # TODO tal vez mandar este ACK en el worker
                         # logger.debug("Enviando ACK de fragmento a %s...", str(addr))
@@ -370,7 +376,13 @@ class ChatroomWindows(QWidget):
 
         self.layout = {} # Diccionario para almacenar los layout de cada chat privado
         self.received_files = {} # Diccionario para almacenar los archivos recibidos, key: sender, value: dict of files
+        
+        # buttons to play and save files
         self.save_button = {} # Diccionario para almacenar los botones de guardar archivo
+        self.play_button = {} # Diccionario para almacenar los botones de reproducir archivo
+        
+        # workers
+        self.play_file_worker = {} # Diccionario para almacenar los workers de reproducción de archivos, key: nombre del archivo, value: worker
         self.file_sender_worker = {} # Diccionario para almacenar los workers de envio de archivos, key: nombre del archivo mas el nickname del destinatario, value: worker
 
         self.setWindowTitle(f"Chatroom de {self.sender_nickname}")
@@ -395,10 +407,15 @@ class ChatroomWindows(QWidget):
         placeholder_item.setFont(QFont("Arial", 10, QFont.StyleItalic))
         self.list_users.addItem(placeholder_item) # Agregar el placeholder al QListWidget
 
+        # Crear una instancia de Player
+        self.player_widget = None
+
+
         # Add widgets to the layout
         self.main_layout.addWidget(text_title)
         self.main_layout.addWidget(self.btn_create_group)
         self.main_layout.addWidget(self.list_users)
+        #self.main_layout.addWidget(self.player_widget)
 
         # Establecer el layout principal en la ventana
         self.setLayout(self.main_layout)
@@ -439,6 +456,21 @@ class ChatroomWindows(QWidget):
             else:
                 logger.error("No se encontró la clave en text_box")
 
+    def play_file(self, temp_file_path):
+        """Abre la ventana de reproducción de video."""
+        #self.video_player_window = VideoPlayerWindow(temp_file_path)
+        #self.video_player_window.show()
+
+        # Mostrar la ventana del reproductor
+        self.player_widget = Player()
+        self.player_widget.show()
+
+        # Cambiar el tamaño de la ventana
+        self.player_widget.resize(640, 480)
+
+        # Abrir un archivo de video (opcional)
+        self.player_widget.OpenFile(temp_file_path)
+
     def save_file(self, sender_nickname, temp_file_path, file_name):
         """ Guarda el archivo en la ubicación seleccionada por el usuario """
         if file_name not in self.received_files[sender_nickname]: # Si el archivo ya fue guardado, no hacer nada
@@ -460,6 +492,7 @@ class ChatroomWindows(QWidget):
                 # Deshabilitar el botón de guardar
                 self.save_button[sender_nickname][file_name].setEnabled(False)
                 self.save_button[sender_nickname][file_name].setText(f"Archivo ya fue guardado: {file_name}.")
+                self.play_button[sender_nickname][file_name].clicked.connect(lambda: self.play_file(file_path))
             except Exception as e:
                 logger.error(f"Error al guardar el archivo: {e}")
                 self.text_box[sender_nickname].append(f"Error al guardar el archivo {file_name}.")
@@ -478,8 +511,8 @@ class ChatroomWindows(QWidget):
             logger.error(f"Error al crear archivo temporal: {e}")
             raise
 
-    def update_private_chat_files(self, sender_nickname, file_name, file_size, percentage=0):
-        """ Este se llama desde self.fragmentReceived.emit(mensaje) en CheckPrivateIncomingFilesWorker """
+    def update_private_chat_files(self, sender_nickname, file_name, temp_file_path, percentage=0):
+        """ Este se llama desde self.fragmentReceived.emit en CheckPrivateIncomingFilesWorker """
         if sender_nickname not in self.save_button:
             self.save_button[sender_nickname] = {}
 
@@ -487,6 +520,16 @@ class ChatroomWindows(QWidget):
             self.save_button[sender_nickname][file_name] = QPushButton(f"[Progress] {file_name}: 1%")
             self.save_button[sender_nickname][file_name].setEnabled(False)
             self.layout[sender_nickname].layout().addWidget(self.save_button[sender_nickname][file_name])
+
+        if sender_nickname not in self.play_button:
+            self.play_button[sender_nickname] = {}
+
+        if file_name not in self.play_button[sender_nickname]:
+            self.play_button[sender_nickname][file_name] = QPushButton(f"[Play] {file_name}")
+            self.play_button[sender_nickname][file_name].setEnabled(True)
+            self.layout[sender_nickname].layout().addWidget(self.play_button[sender_nickname][file_name])
+            # TODO luego este debe ser el path donde lo guardo el usuario
+            self.play_button[sender_nickname][file_name].clicked.connect(lambda: self.play_file(temp_file_path))
 
         if file_name not in self.progress_bar_received[sender_nickname].getLabelTex():
             self.progress_bar_received[sender_nickname].setLabelText(f"Recibiendo {file_name}...")
@@ -965,7 +1008,7 @@ class CheckPrivateIncomingMessagesWorker(QObject):
 
 class CheckPrivateIncomingFilesWorker(QObject):
     createTemporaryFile = pyqtSignal(str, str, str)
-    fragmentReceived = pyqtSignal(str, str, int, int)
+    fragmentReceived = pyqtSignal(str, str, str, int)
 
     def __init__(self, server: ServerTCP, sender_nickname):
         super().__init__()
@@ -998,7 +1041,7 @@ class CheckPrivateIncomingFilesWorker(QObject):
                 # Verificar si es el marcador de fin de archivo
                 if b":FIN_DEL_ARCHIVO:" in mensaje:
                     logger.debug("Fin de envio del archivo %s... from: %s", file_name, self.sender_nickname)
-                    self.fragmentReceived.emit(self.sender_nickname, file_name, file_size, 100) # TODO esto hace que se mande dos veces el mismo mensaje
+                    self.fragmentReceived.emit(self.sender_nickname, file_name, temp_file_path, 100) # TODO esto hace que se mande dos veces el mismo mensaje
                     continue
 
                 try:
@@ -1039,8 +1082,8 @@ class CheckPrivateIncomingFilesWorker(QObject):
                         percentage = int((received_size / file_size) * 100)
 
                     #if percentage % 2 == 0:
-                        #logger.debug("Porcentaje procesado actualmente %s", percentage)
-                        #logger.debug("Fragmento/chunk recibido en process_files %s/%s bytes", received_size, file_size)
+                    #    logger.debug("Porcentaje procesado actualmente %s", percentage)
+                    #    logger.debug("Fragmento/chunk recibido en process_files %s/%s bytes", received_size, file_size)
 
                     # si el archivo es menor a 300 mb, se actualiza cada 5%
                     if file_size < 300000000:
@@ -1050,7 +1093,7 @@ class CheckPrivateIncomingFilesWorker(QObject):
 
                     if percentage % module == 0:
                         # esto llama a update_private_chat_files
-                        self.fragmentReceived.emit(sender_nickname, file_name, file_size, percentage)
+                        self.fragmentReceived.emit(sender_nickname, file_name, temp_file_path, percentage)
             except queue.Empty:
                 continue
             except Exception as e:
@@ -1320,6 +1363,10 @@ def main():
     # python send_files.py <server_type> <multicast_port>
     # Master: python3 send_files.py master 30001
     # Other: python3 send_files.py 30001
+
+    # Configurar la ruta de las bibliotecas de VLC (solo en macOS)
+    os.environ['VLC_PLUGIN_PATH'] = '/Applications/VLC.app/Contents/MacOS/plugins'
+    os.environ['VLC_LIB_PATH'] = '/Applications/VLC.app/Contents/MacOS/lib'
 
     global MY_MULTICAST_PORT, WORKER_ORCHESTRATOR, THREAD_ORCHESTRATOR, MY_CHATROOM, IS_MASTER
     # Conectarse a un servidor multicast para comunicación interna o técnica entre nodos.
