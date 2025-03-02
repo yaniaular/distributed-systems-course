@@ -325,7 +325,7 @@ class FileSenderWorker(QThread):
             if not self.send_with_retry(b":FIN_DEL_ARCHIVO:"):
                 raise Exception("No se pudo enviar el marcador de fin del archivo.")
 
-            self.progress_label.emit(f"Terminado {file_name}!", self.recipient_nickname)
+            self.progress_label.emit(f"Enviado! {file_name}", self.recipient_nickname)
             self.finished.emit()  # Emitir señal de finalización
 
         except Exception as e:
@@ -370,6 +370,7 @@ class ChatroomWindows(QWidget):
         self.layout = {} # Diccionario para almacenar los layout de cada chat privado
         self.received_files = {} # Diccionario para almacenar los archivos recibidos, key: sender, value: dict of files
         self.save_button = {} # Diccionario para almacenar los botones de guardar archivo
+        self.file_sender_worker = {} # Diccionario para almacenar los workers de envio de archivos, key: nombre del archivo mas el nickname del destinatario, value: worker
 
         self.setWindowTitle(f"Chatroom de {self.sender_nickname}")
         self.setGeometry(100, 100, 300, 300)
@@ -469,14 +470,15 @@ class ChatroomWindows(QWidget):
         if file_name not in self.progress_bar_received[sender_nickname].getLabelTex():
             self.progress_bar_received[sender_nickname].setLabelText(f"Recibiendo {file_name}...")
 
-        if percentage >= 100:
+        if percentage == 100: # para evitar que se ejecute mas de una vez
             self.received_files[sender_nickname][file_name] = file_data
             self.save_button[sender_nickname][file_name].setText(f"[Save File] {file_name}")
             self.save_button[sender_nickname][file_name].setEnabled(True)
             self.save_button[sender_nickname][file_name].clicked.connect(lambda: self.save_file(sender_nickname, file_name, file_data))
-            self.progress_bar_received[sender_nickname].setLabelText(f"Enviado {file_name}!")
+            self.progress_bar_received[sender_nickname].setLabelText(f"Recibido! {file_name}")
             self.progress_bar_received[sender_nickname].setValue(percentage)
             self.let_know_sender_i_received_file(sender_nickname, file_name)
+            self.text_box[sender_nickname].append(f"Archivo recibido correctamente: {file_name}.")
         elif percentage % 5 == 0:
             self.save_button[sender_nickname][file_name].setText(f"[Progress] {file_name}: {percentage}%")
             self.progress_bar_received[sender_nickname].setValue(percentage)
@@ -551,7 +553,7 @@ class ChatroomWindows(QWidget):
 
             # crear worker para procesar archivos entrantes y actualizar la GUI
             # esto se hizo porque con hilos normales la interfaz se congelaba
-            self.check_workers[recipient_nickname + "files"] = CheckPrivateIncomingFilesWorker(server, recipient_nickname) # TODO tal vez podemos ahorrarnos esto y solo conectar el process_files
+            self.check_workers[recipient_nickname + "files"] = CheckPrivateIncomingFilesWorker(server, recipient_nickname)
             self.check_threads[recipient_nickname + "files"] = QThread()
             self.check_workers[recipient_nickname + "files"].moveToThread(self.check_threads[recipient_nickname + "files"])
             self.check_workers[recipient_nickname + "files"].messageReceived.connect(self.update_private_chat_files)
@@ -634,7 +636,7 @@ class ChatroomWindows(QWidget):
 
             # si el recipient no tiene un cliente para escribirnos hay
             # que enviarle una solicitud al recipient para que cree uno
-            self.send_request_to_create_tcp_client_files(recipient_nickname, port) # TODO: revisar si es necesario
+            self.send_request_to_create_tcp_client_files(recipient_nickname, port)
 
     def create_window_group(self):
         # Crear una nueva ventana para el chat
@@ -693,29 +695,30 @@ class ChatroomWindows(QWidget):
         file_path, _ = QFileDialog.getOpenFileName()
         if not file_path:
             return
+        file_name = os.path.basename(file_path)
 
         client_socket = USER_INFO_BY_NICKNAME[recipient_nickname].client
         logger.debug("Obtener el client_files de %s", recipient_nickname)
         client_socket_files = USER_INFO_BY_NICKNAME[recipient_nickname].client_files
+        self.text_box[recipient_nickname].append(f"Enviando archivo... {file_path}")
 
         # Crear y configurar el worker
-        # TODO tal vez para enviar archivos en diferentes chats esto debe ser un array as well
-        self.file_sender_worker = FileSenderWorker(
+        self.file_sender_worker[f"{recipient_nickname}:{file_name}"] = FileSenderWorker(
             file_path=file_path,
-            recipient_nickname=recipient_nickname,
-            sender_nickname=self.sender_nickname,
+            recipient_nickname=recipient_nickname, # el recipient es el que recibirá el archivo
+            sender_nickname=self.sender_nickname, # el sender soy yo
             client_socket=client_socket,
             client_socket_files=client_socket_files,
         )
 
         # Conectar señales
-        self.file_sender_worker.progress.connect(self.update_progress)
-        self.file_sender_worker.progress_label.connect(self.update_progress_label)
-        self.file_sender_worker.finished.connect(self.on_file_sent)
-        self.file_sender_worker.error.connect(self.show_error)
+        self.file_sender_worker[f"{recipient_nickname}:{file_name}"].progress.connect(self.update_progress)
+        self.file_sender_worker[f"{recipient_nickname}:{file_name}"].progress_label.connect(self.update_progress_label)
+        self.file_sender_worker[f"{recipient_nickname}:{file_name}"].finished.connect(self.on_file_sent)
+        self.file_sender_worker[f"{recipient_nickname}:{file_name}"].error.connect(self.show_error)
 
         # Iniciar el hilo
-        self.file_sender_worker.start()
+        self.file_sender_worker[f"{recipient_nickname}:{file_name}"].start()
 
     def update_progress_label(self, label_text, recipient_nickname):
         """Actualiza el texto de la barra de progreso."""
