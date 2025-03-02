@@ -260,14 +260,15 @@ class ClientTCP:
         self.client_socket.close()
 
 class FileSenderWorker(QThread):
-    progress = pyqtSignal(int)  # Señal para actualizar el progreso
+    progress = pyqtSignal(int, str)  # Señal para actualizar el progreso
     finished = pyqtSignal()     # Señal para indicar que el envío terminó
     error = pyqtSignal(str)     # Señal para manejar errores
 
-    def __init__(self, file_path, sender_nickname, client_socket, client_socket_files):
+    def __init__(self, file_path, recipient_nickname, sender_nickname, client_socket, client_socket_files):
         super().__init__()
         self.file_path = file_path
         self.sender_nickname = sender_nickname
+        self.recipient_nickname = recipient_nickname # Persona a la que le estamos mandado el archivo
         self.client_socket = client_socket
         self.client_socket_files = client_socket_files
 
@@ -276,14 +277,11 @@ class FileSenderWorker(QThread):
         while retries < max_retries:
             self.client_socket_files.send_fragment(fragment)  # Envía el fragmento
             
-            # Esperar ACK del receptor
-            try:
+            try: # Esperar ACK del receptor
                 ack = self.client_socket_files.client_socket.recv(1024)  # Recibe el ACK
                 ack_decrypted = caesar_decrypt(ack.decode('utf-8'), SHIFT)  # Descifra el ACK
-                logger.debug("ACK recibido: %s", ack_decrypted)
                 if ack_decrypted == "ACK":
                     return True  # ACK recibido, fragmento enviado correctamente
-            
             except Exception as e:
                 logger.error("Error recibiendo ACK: %s", e)
                 logger.warning(f"No se recibió ACK. Reintentando... ({retries + 1}/{max_retries})")
@@ -321,7 +319,7 @@ class FileSenderWorker(QThread):
                     sent_size += len(chunk)
                     progress = int((sent_size / file_size) * 100)
                     # desde aqui se llama a la señal de progreso: def update_progress en ChatroomWindows
-                    self.progress.emit(progress)  # Emitir progreso
+                    self.progress.emit(progress, self.recipient_nickname)  # Emitir progreso
 
             # Enviar marcador de fin
             if not self.send_with_retry(b":FIN_DEL_ARCHIVO:"):
@@ -645,14 +643,11 @@ class ChatroomWindows(QWidget):
         while retries < max_retries:
             client_socket.send_fragment(fragment) # sendall
             
-            # Esperar ACK del receptor
-            try:
+            try: # Esperar ACK del receptor
                 ack = client_socket.client_socket.recv(1024)  # Recibe el ACK
                 ack_decrypted = caesar_decrypt(ack.decode('utf-8'), SHIFT)  # Descifra el ACK
-                logger.debug("ACK recibido???: %s", ack_decrypted)
                 if ack_decrypted == "ACK":
                     return True  # ACK recibido, fragmento enviado correctamente
-            
             except Exception as e:
                 logger.error("Error recibiendo ACK: %s", e)
                 logger.warning(f"No se recibió ACK. Reintentando... ({retries + 1}/{max_retries})")
@@ -678,6 +673,7 @@ class ChatroomWindows(QWidget):
         # TODO tal vez para enviar archivos en diferentes chats esto debe ser un array as well
         self.file_sender_worker = FileSenderWorker(
             file_path=file_path,
+            recipient_nickname=recipient_nickname,
             sender_nickname=self.sender_nickname,
             client_socket=client_socket,
             client_socket_files=client_socket_files,
@@ -691,9 +687,9 @@ class ChatroomWindows(QWidget):
         # Iniciar el hilo
         self.file_sender_worker.start()
 
-    def update_progress(self, progress):
+    def update_progress(self, progress, recipient_nickname):
         """Actualiza la barra de progreso o muestra el progreso."""
-        logger.debug(f"Progreso: {progress}%")
+        self.progress_bar[recipient_nickname].setValue(progress)
         # Aquí puedes actualizar la interfaz de usuario con el progreso
 
     def on_file_sent(self):
@@ -951,13 +947,6 @@ class CheckPrivateIncomingFilesWorker(QObject):
                             # Abrir el archivo para escritura
                             logger.debug("Datos recibidos\nNombre: %s\nTamaño: %s\nRemitente: %s", file_name, file_size, self.sender_nickname)
 
-                            # Enviar ACK al remitente
-                            #ack = "ACK"
-                            #ack_encrypted = caesar_encrypt(ack, SHIFT)
-                            #self.client_files.client_socket.sendall(ack_encrypted.encode())
-                            #logger.debug("ACK enviado a %s", self.client_files.address)
-                            #self.client_files.send_ack()
-
                 except UnicodeDecodeError:
                     # Si no se puede decodificar, es un chunk binario
                     file_data.extend(mensaje)
@@ -971,8 +960,6 @@ class CheckPrivateIncomingFilesWorker(QObject):
                     logger.debug("Porcentaje procesado actualmente %s", percentage)
                     if percentage % 5 == 0:
                         self.messageReceived.emit(sender_nickname, file_name, file_size, file_data, percentage)
-                    # Enviar ACK al remitente
-                    #self.client_files.send_ack()
             except queue.Empty:
                 continue
             except Exception as e:
