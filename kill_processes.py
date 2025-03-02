@@ -1,4 +1,5 @@
 import psutil
+import os
 
 # Puertos objetivo
 PUERTOS_OBJETIVO = {30000, 30001, 30002, 30003, 30004, 30005, 30006, 30007, 30008, 30009, 40000, 40001, 40002, 40003, 40004, 40005, 40006, 40007, 40008, 40009}
@@ -49,7 +50,21 @@ def kill_processes_by_keywords(keywords):
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             pass
 
+def delete_temp_files():
+    command = "rm -f /tmp/*.tmp"
+    print(f"Ejecutando: {command}")
+    os.system(command)
+    
+    command2 = "sudo rm -rf /var/folders/*/*/*/*"
+    print(f"Ejecutando: {command2}")
+    os.system(command2)
+
+    command3 = "sudo rm -rf /private/var/folders/*/*/*/*"
+    print(f"Ejecutando: {command3}")
+    os.system(command3)
+
 if __name__ == "__main__":
+    delete_temp_files()
     matar_procesos_por_puertos(PUERTOS_OBJETIVO)
     kill_processes_by_keywords(KEYWORDS)
-
+    print("Proceso finalizado.")
