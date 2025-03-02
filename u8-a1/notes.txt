@@ -1,10 +1,13 @@
 Errores que a veces pasan:
 
-
-_message** [Recibido en None] JOIN_CHATROOM de yani
+2025-03-01 21:44:48,691 - App principal - DEBUG - **handle_incoming_message** [Recibido en paco] CREATE_TCP_CLIENT de yani
+2025-03-01 21:44:48,691 - App principal - DEBUG - Ok, crear cliente para enviar mensajes escritos a yani
+Intentando crear cliente para enviar mensajes a yani - 192.168.0.222:30000
 Traceback (most recent call last):
-  File "/Users/yanina/Documents/Maestria Big Data/Sistemas Distribuidos/u8-a1/send_files.py", line 1063, in handle_incoming_message
-    MY_CHATROOM.update_user_list()
-    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-AttributeError: 'NoneType' object has no attribute 'update_user_list'
+  File "/Users/yanina/Documents/Maestria Big Data/Sistemas Distribuidos/u8-a1/send_files.py", line 1217, in handle_incoming_message
+    client_socket = ClientTCP(f"client_of_{recipient_nickname}_to_send_messages_to_{sender_nickname}", sender_ip, sender_port)
+  File "/Users/yanina/Documents/Maestria Big Data/Sistemas Distribuidos/u8-a1/send_files.py", line 228, in __init__
+    self.client_socket.connect(self.address)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+ConnectionRefusedError: [Errno 61] Connection refused
 zsh: abort      python3 send_files.py slave 30001

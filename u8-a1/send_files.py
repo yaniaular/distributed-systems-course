@@ -261,6 +261,7 @@ class ClientTCP:
 
 class FileSenderWorker(QThread):
     progress = pyqtSignal(int, str)  # Señal para actualizar el progreso
+    progress_label = pyqtSignal(str, str)  # Señal para actualizar el label de la barra de progreso
     finished = pyqtSignal()     # Señal para indicar que el envío terminó
     error = pyqtSignal(str)     # Señal para manejar errores
 
@@ -307,6 +308,8 @@ class FileSenderWorker(QThread):
             if not self.send_with_retry(info_marker):
                 raise Exception("No se pudo enviar el marcador de inicio del archivo.")
 
+            self.progress_label.emit(f"Enviando {file_name}...", self.recipient_nickname)
+
             # Enviar el archivo en fragmentos
             with open(self.file_path, 'rb') as file:
                 sent_size = 0
@@ -330,6 +333,24 @@ class FileSenderWorker(QThread):
         except Exception as e:
             self.error.emit(str(e))  # Emitir error
 
+class ProgressBarWithLabel(QWidget):
+    def __init__(self, label_text, parent=None):
+        super().__init__(parent)
+        self.layout = QVBoxLayout(self)
+
+        # Crear el QLabel
+        self.label = QLabel(label_text)
+        self.layout.addWidget(self.label)
+
+        # Crear el QProgressBar
+        self.progress_bar = QProgressBar()
+        self.layout.addWidget(self.progress_bar)
+
+    def setValue(self, value):
+        self.progress_bar.setValue(value)
+    
+    def setLabelText(self, text):
+        self.label.setText(text)
 
 class ChatroomWindows(QWidget):
     def __init__(self, nickname: str):
@@ -402,7 +423,7 @@ class ChatroomWindows(QWidget):
             sender_nickname, _, file_name, file_size = mensaje.split(":")
             file_size = int(file_size)
             if sender_nickname in self.text_box:
-                self.text_box[sender_nickname].append(f"{sender_nickname}: Recibiendo archivo [1] {file_name}...")
+                self.text_box[sender_nickname].append(f"{sender_nickname}: Recibiendo archivo: {file_name}...")
             else:
                 logger.error("No se encontró la clave en text_box")
             # TODO: Hacer algo en la interfaz para mostrar que se está recibiendo un archivo
@@ -658,7 +679,6 @@ class ChatroomWindows(QWidget):
         logger.error(f"No se pudo enviar el fragmento después de {max_retries} intentos.")
         return False  # No se pudo enviar el fragmento después de los reintentos
 
-
     def select_and_send_file(self, recipient_nickname):
         logger.debug("Seleccionar archivo para enviar a %s", recipient_nickname)
         file_path, _ = QFileDialog.getOpenFileName()
@@ -681,11 +701,16 @@ class ChatroomWindows(QWidget):
 
         # Conectar señales
         self.file_sender_worker.progress.connect(self.update_progress)
+        self.file_sender_worker.progress_label.connect(self.update_progress_label)
         self.file_sender_worker.finished.connect(self.on_file_sent)
         self.file_sender_worker.error.connect(self.show_error)
 
         # Iniciar el hilo
         self.file_sender_worker.start()
+
+    def update_progress_label(self, label_text, recipient_nickname):
+        """Actualiza el texto de la barra de progreso."""
+        self.progress_bar[recipient_nickname].setLabelText(label_text)
 
     def update_progress(self, progress, recipient_nickname):
         """Actualiza la barra de progreso o muestra el progreso."""
@@ -732,7 +757,7 @@ class ChatroomWindows(QWidget):
             frame_archivo.layout().addWidget(self.file_button[recipient_nickname])
 
             # Barra de progreso
-            self.progress_bar[recipient_nickname] = QProgressBar()
+            self.progress_bar[recipient_nickname] = ProgressBarWithLabel("Ningun archivo por ahora")
             self.progress_bar[recipient_nickname].setValue(0)
             frame_archivo.layout().addWidget(self.progress_bar[recipient_nickname])
 
@@ -1136,6 +1161,7 @@ class IncomingMessageOrchestrator(QObject):
                 if msg:
                     arguments = msg.split(":")
                     # Emitir la señal para que el hilo principal maneje la actualización de la GUI
+                    # llama a handle_incoming_message
                     self.messageReceived.emit(arguments, self.is_master)
             except socket.timeout:
                 pass
