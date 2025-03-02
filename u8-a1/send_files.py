@@ -468,8 +468,10 @@ class ChatroomWindows(QWidget):
         if sender_nickame not in self.player_widget:
             self.player_widget[sender_nickame] = {}
 
+        file_path = self.received_files[sender_nickame][file_name]
+
         if file_name not in self.player_widget[sender_nickame]:
-            self.player_widget[sender_nickame][file_name] = Player() 
+            self.player_widget[sender_nickame][file_name] = Player(file_path)
             # borrar la instancia cuando se cierre la ventana
             #self.player_widget[sender_nickame][file_name].close.connect(lambda: self.delete_player_widget(sender_nickame, file_name))
             self.player_widget[sender_nickame][file_name].window_closed.connect(lambda: self.delete_player_widget(sender_nickame, file_name))
@@ -481,10 +483,8 @@ class ChatroomWindows(QWidget):
         # Cambiar el tamaño de la ventana
         self.player_widget[sender_nickame][file_name].resize(640, 480)
 
-        file_path = self.received_files[sender_nickame][file_name]
-
         # Abrir un archivo de video (opcional)
-        self.player_widget[sender_nickame][file_name].OpenFile(file_path)
+        self.player_widget[sender_nickame][file_name].OpenFile()
 
     def save_file(self, sender_nickname, temp_file_path, file_name):
         """ Guarda el archivo en la ubicación seleccionada por el usuario """

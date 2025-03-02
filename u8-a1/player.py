@@ -9,12 +9,13 @@ class Player(QWidget):
     window_closed = pyqtSignal()
 
     """Un reproductor de video usando VLC y Qt."""
-    def __init__(self, parent=None):
+    def __init__(self, file_path, parent=None):
         super().__init__(parent)
         self.instance = vlc.Instance()
         self.mediaplayer = self.instance.media_player_new()
         self.createUI()
         self.isPaused = False
+        self.file_path = file_path
 
     def createUI(self):
         """Configurar la interfaz de usuario."""
@@ -41,11 +42,13 @@ class Player(QWidget):
 
         self.playbutton = QPushButton("Play", self)
         self.stopbutton = QPushButton("Stop", self)
+        self.updatefragmentbutton = QPushButton("Update fragments", self)
 
         # Layout
         hbox = QHBoxLayout()
         hbox.addWidget(self.playbutton)
         hbox.addWidget(self.stopbutton)
+        hbox.addWidget(self.updatefragmentbutton)
 
         self.vbox = QVBoxLayout()
         self.vbox.addWidget(self.videoframe)
@@ -58,6 +61,7 @@ class Player(QWidget):
         # Conectar señales
         self.playbutton.clicked.connect(self.PlayPause)
         self.stopbutton.clicked.connect(self.Stop)
+        self.updatefragmentbutton.clicked.connect(self.updateFragment)
 
         self.timer = QTimer(self)
         self.timer.setInterval(100)
@@ -127,9 +131,9 @@ class Player(QWidget):
             position = current_time / total_time
             self.positionslider.setValue(int(position * 1000))
 
-    def OpenFile(self, filename):
+    def OpenFile(self):
         """Abrir un archivo de video."""
-        self.media = self.instance.media_new(filename)
+        self.media = self.instance.media_new(self.file_path)
         self.mediaplayer.set_media(self.media)
 
         # parse the metadata of the file
@@ -157,6 +161,25 @@ class Player(QWidget):
 
         self.updateTimeLabel()
         self.updateSlider()
+
+    def updateFragment(self):
+        # Detener la reproducción actual
+        self.mediaplayer.stop()
+
+        # Cargar el nuevo fragmento
+        self.media = self.instance.media_new(self.file_path)
+        self.mediaplayer.set_media(self.media)
+        self.media.parse()
+
+        self.PlayPause()
+
+        # Esperar a que el video se cargue completamente para revisar la duracion
+        while self.mediaplayer.get_state() != vlc.State.Playing:
+            time.sleep(0.1)  # Esperar hasta que el video esté en estado "Playing"
+
+        self.updateTimeLabel()
+        self.updateSlider()
+
 
     def updateUI(self):
         """updates the user interface"""
