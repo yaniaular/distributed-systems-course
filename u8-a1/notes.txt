@@ -11,3 +11,29 @@ Traceback (most recent call last):
     ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
 ConnectionRefusedError: [Errno 61] Connection refused
 zsh: abort      python3 send_files.py slave 30001
+
+
+
+
+
+
+
+-03-01 23:05:53,067 - App principal - DEBUG - Configurando servidor en __init__ ...
+2025-03-01 23:05:53,092 - App principal - DEBUG - [server_of_yani_to_receive_messages_from_paco]: Usando IP: 192.168.0.222 - Usando puerto: 30000 - En resumen address: ('192.168.0.222', 30000)
+2025-03-01 23:05:53,092 - App principal - INFO - Starting servidor ...
+2025-03-01 23:05:53,094 - App principal - DEBUG - Esperando 2 SEGUNDOS a que el servidor de mensajes se inicie antes de crear el worker...
+2025-03-01 23:05:53,162 - App principal - DEBUG - Getting IP local: 192.168.0.222
+Process Process-1:
+Traceback (most recent call last):
+  File "/opt/homebrew/Cellar/python@3.13/3.13.0_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/multiprocessing/process.py", line 313, in _bootstrap
+    self.run()
+    ~~~~~~~~^^
+  File "/opt/homebrew/Cellar/python@3.13/3.13.0_1/Frameworks/Python.framework/Versions/3.13/lib/python3.13/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/yanina/Documents/Maestria Big Data/Sistemas Distribuidos/u8-a1/send_files.py", line 170, in server_process
+    server_socket.bind(address)
+    ~~~~~~~~~~~~~~~~~~^^^^^^^^^
+OSError: [Errno 48] Address already in use
+2025-03-01 23:05:55,095 - App principal - INFO - ************ CheckPrivateIncomingMessagesWorker creado para paco
+2025-03-01 23:05:55,097 - App principal - DEBUG - Esperando 2 SEGUNDOS a que el Worker de mensajes se inicie antes de solicitar el cliente...

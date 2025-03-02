@@ -173,7 +173,7 @@ class ServerTCP:
         try:
             # El puerto en addr es un puerto efímero asignado 
             # por el sistema operativo del cliente.
-            conn, addr = server_socket.accept()
+            conn, addr = server_socket.accept() # TODO este addr no se usa, se puede borrar
             logger.info("Conexión establecida con: %s", addr)
 
             while True:
@@ -189,12 +189,9 @@ class ServerTCP:
                         ack_encrypted = caesar_encrypt(ack, SHIFT)
                         conn.sendall(ack_encrypted.encode('utf-8'))
                     else:
-                        # logger.debug("Recibido fragmento en server_process")
-                        # TODO: hacer algo con el fragmento
                         logger.debug("Recibido fragmento en server_process")
                         incoming_queue.put((data, addr))
-                        # TODO borrar este sleep
-                        #time.sleep(0.1) # para que alcance el worker a procesar el fragmento
+                        # TODO tal vez mandar este ACK en el worker
                         logger.debug("Enviando ACK de fragmento a %s...", str(addr))
                         ack = "ACK"
                         ack_encrypted = caesar_encrypt(ack, SHIFT)
@@ -328,6 +325,7 @@ class FileSenderWorker(QThread):
             if not self.send_with_retry(b":FIN_DEL_ARCHIVO:"):
                 raise Exception("No se pudo enviar el marcador de fin del archivo.")
 
+            self.progress_label.emit(f"Terminado {file_name}!", self.recipient_nickname)
             self.finished.emit()  # Emitir señal de finalización
 
         except Exception as e:
@@ -352,6 +350,9 @@ class ProgressBarWithLabel(QWidget):
     def setLabelText(self, text):
         self.label.setText(text)
 
+    def getLabelTex(self):
+        return self.label.text()
+
 class ChatroomWindows(QWidget):
     def __init__(self, nickname: str):
         super().__init__()
@@ -362,6 +363,7 @@ class ChatroomWindows(QWidget):
         self.entry_message = {} # Diccionario para almacenar los QLineEdit de cada chat privado
         self.file_button = {} # Diccionario para almacenar los QPushButton de cada chat privado
         self.progress_bar = {} # Diccionario para almacenar los QProgressBar de cada chat privado
+        self.progress_bar_received = {} # Diccionario para almacenar los QProgressBar de recepcion de archivos por cada chat privado
         self.check_workers = {} # Diccionario para almacenar los workers de cada chat privado
         self.check_threads = {} # Diccionario para almacenar los threads de cada chat privado
 
@@ -460,17 +462,24 @@ class ChatroomWindows(QWidget):
             self.save_button[sender_nickname] = {}
 
         if file_name not in self.save_button[sender_nickname]:
-            self.save_button[sender_nickname][file_name] = QPushButton(f"Save Received File {file_name}: 1%")
+            self.save_button[sender_nickname][file_name] = QPushButton(f"[Progress] {file_name}: 1%")
+            self.save_button[sender_nickname][file_name].setEnabled(False)
             self.layout[sender_nickname].layout().addWidget(self.save_button[sender_nickname][file_name])
 
-        if percentage >= 100:# and b":FIN_DEL_ARCHIVO:" in file_data:
+        if file_name not in self.progress_bar_received[sender_nickname].getLabelTex():
+            self.progress_bar_received[sender_nickname].setLabelText(f"Recibiendo {file_name}...")
+
+        if percentage >= 100:
             self.received_files[sender_nickname][file_name] = file_data
-            self.save_button[sender_nickname][file_name].setText(f"Save Received File {file_name}: {percentage}%")
+            self.save_button[sender_nickname][file_name].setText(f"[Save File] {file_name}")
+            self.save_button[sender_nickname][file_name].setEnabled(True)
             self.save_button[sender_nickname][file_name].clicked.connect(lambda: self.save_file(sender_nickname, file_name, file_data))
-            # TODO: mostrar un mensaje en la interfaz de que el archivo se recibió correctamente
-            # self.let_know_sender_i_received_file(sender_nickname, file_name)
+            self.progress_bar_received[sender_nickname].setLabelText(f"Enviado {file_name}!")
+            self.progress_bar_received[sender_nickname].setValue(percentage)
+            self.let_know_sender_i_received_file(sender_nickname, file_name)
         elif percentage % 5 == 0:
-            self.save_button[sender_nickname][file_name].setText(f"Save Received File {file_name}: {percentage}%")
+            self.save_button[sender_nickname][file_name].setText(f"[Progress] {file_name}: {percentage}%")
+            self.progress_bar_received[sender_nickname].setValue(percentage)
 
     def update_user_list(self):
         """ Actualiza la lista de usuarios conectados. """
@@ -747,6 +756,17 @@ class ChatroomWindows(QWidget):
             self.chat_windows[recipient_nickname].setCentralWidget(central_widget)
             self.layout[recipient_nickname] = QVBoxLayout(central_widget)
 
+            # Frame para la barra de progreso al recibir un archivo
+            frame_archivo_recibido = QWidget()
+            frame_archivo_recibido.setLayout(QHBoxLayout())
+
+            # Barra de progreso de recibido
+            self.progress_bar_received[recipient_nickname] = ProgressBarWithLabel("Ningun archivo recibido por ahora")
+            self.progress_bar_received[recipient_nickname].setValue(0)
+            frame_archivo_recibido.layout().addWidget(self.progress_bar_received[recipient_nickname])
+
+            self.layout[recipient_nickname].addWidget(frame_archivo_recibido)
+
             # Frame para el botón de archivos y la barra de progreso
             frame_archivo = QWidget()
             frame_archivo.setLayout(QHBoxLayout())
@@ -757,7 +777,7 @@ class ChatroomWindows(QWidget):
             frame_archivo.layout().addWidget(self.file_button[recipient_nickname])
 
             # Barra de progreso
-            self.progress_bar[recipient_nickname] = ProgressBarWithLabel("Ningun archivo por ahora")
+            self.progress_bar[recipient_nickname] = ProgressBarWithLabel("Ningun archivo enviado por ahora")
             self.progress_bar[recipient_nickname].setValue(0)
             frame_archivo.layout().addWidget(self.progress_bar[recipient_nickname])
 
