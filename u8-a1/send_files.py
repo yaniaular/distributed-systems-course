@@ -193,7 +193,8 @@ class ServerTCP:
                         # TODO: hacer algo con el fragmento
                         logger.debug("Recibido fragmento en server_process")
                         incoming_queue.put((data, addr))
-                        time.sleep(0.1) # para que alcance el worker a procesar el fragmento
+                        # TODO borrar este sleep
+                        #time.sleep(0.1) # para que alcance el worker a procesar el fragmento
                         logger.debug("Enviando ACK de fragmento a %s...", str(addr))
                         ack = "ACK"
                         ack_encrypted = caesar_encrypt(ack, SHIFT)
@@ -257,6 +258,80 @@ class ClientTCP:
 
     def close(self):
         self.client_socket.close()
+
+class FileSenderWorker(QThread):
+    progress = pyqtSignal(int)  # Señal para actualizar el progreso
+    finished = pyqtSignal()     # Señal para indicar que el envío terminó
+    error = pyqtSignal(str)     # Señal para manejar errores
+
+    def __init__(self, file_path, sender_nickname, client_socket, client_socket_files):
+        super().__init__()
+        self.file_path = file_path
+        self.sender_nickname = sender_nickname
+        self.client_socket = client_socket
+        self.client_socket_files = client_socket_files
+
+    def send_with_retry(self, fragment, max_retries=3, timeout=2):
+        retries = 0
+        while retries < max_retries:
+            self.client_socket_files.send_fragment(fragment)  # Envía el fragmento
+            
+            # Esperar ACK del receptor
+            try:
+                ack = self.client_socket_files.client_socket.recv(1024)  # Recibe el ACK
+                ack_decrypted = caesar_decrypt(ack.decode('utf-8'), SHIFT)  # Descifra el ACK
+                logger.debug("ACK recibido: %s", ack_decrypted)
+                if ack_decrypted == "ACK":
+                    return True  # ACK recibido, fragmento enviado correctamente
+            
+            except Exception as e:
+                logger.error("Error recibiendo ACK: %s", e)
+                logger.warning(f"No se recibió ACK. Reintentando... ({retries + 1}/{max_retries})")
+            
+            retries += 1
+            time.sleep(2)  # Esperar antes de reintentar
+        
+        logger.error(f"No se pudo enviar el fragmento después de {max_retries} intentos.")
+        return False  # No se pudo enviar el fragmento después de los reintentos
+
+    def run(self): # este se llama cuando se hace start()
+        """Envía el archivo en segundo plano."""
+        try:
+            # Obtener metadatos del archivo
+            file_name = os.path.basename(self.file_path)
+            file_size = os.path.getsize(self.file_path)
+
+            # Enviar metadatos del archivo
+            self.client_socket.send_message(f"FILE:{file_name}:{file_size}")
+
+            # Enviar marcador de inicio
+            info_marker = f"INICIO_DEL_ARCHIVO:{file_name}:{file_size}:{self.sender_nickname}".encode('utf-8')
+            if not self.send_with_retry(info_marker):
+                raise Exception("No se pudo enviar el marcador de inicio del archivo.")
+
+            # Enviar el archivo en fragmentos
+            with open(self.file_path, 'rb') as file:
+                sent_size = 0
+                while True:
+                    chunk = file.read(1024)
+                    if not chunk:
+                        break
+                    if not self.send_with_retry(chunk):
+                        raise Exception(f"No se pudo enviar un fragmento del archivo {file_name}.")
+                    sent_size += len(chunk)
+                    progress = int((sent_size / file_size) * 100)
+                    # desde aqui se llama a la señal de progreso: def update_progress en ChatroomWindows
+                    self.progress.emit(progress)  # Emitir progreso
+
+            # Enviar marcador de fin
+            if not self.send_with_retry(b":FIN_DEL_ARCHIVO:"):
+                raise Exception("No se pudo enviar el marcador de fin del archivo.")
+
+            self.finished.emit()  # Emitir señal de finalización
+
+        except Exception as e:
+            self.error.emit(str(e))  # Emitir error
+
 
 class ChatroomWindows(QWidget):
     def __init__(self, nickname: str):
@@ -594,36 +669,42 @@ class ChatroomWindows(QWidget):
         file_path, _ = QFileDialog.getOpenFileName()
         if not file_path:
             return
-        file_name = os.path.basename(file_path)
-        file_size = os.path.getsize(file_path)
 
         client_socket = USER_INFO_BY_NICKNAME[recipient_nickname].client
         logger.debug("Obtener el client_files de %s", recipient_nickname)
         client_socket_files = USER_INFO_BY_NICKNAME[recipient_nickname].client_files
-        
-        # Enviar metadatos del archivo
-        client_socket.send_message(f"FILE:{file_name}:{file_size}")
 
-        #self.text_box[recipient_nickname].append(f"Enviando Archivo {file_name}...")
-        time.sleep(1) # para que alcance a actualizar la interfaz
+        # Crear y configurar el worker
+        # TODO tal vez para enviar archivos en diferentes chats esto debe ser un array as well
+        self.file_sender_worker = FileSenderWorker(
+            file_path=file_path,
+            sender_nickname=self.sender_nickname,
+            client_socket=client_socket,
+            client_socket_files=client_socket_files,
+        )
 
-        # Envío del archivo
-        info_marker = f"INICIO_DEL_ARCHIVO:{file_name}:{file_size}:{self.sender_nickname}".encode('utf-8')
-        if not self.send_with_retry(client_socket_files, info_marker):
-            raise Exception("No se pudo enviar el marcador de inicio del archivo.")
-        
-        # Enviar el archivo en fragmentos
-        with open(file_path, 'rb') as file:
-            while True:
-                chunk = file.read(1024)
-                if not chunk:
-                    break
-                if not self.send_with_retry(client_socket_files, chunk):
-                    raise Exception(f"No se pudo enviar un fragmento del archivo {file_name}.")
+        # Conectar señales
+        self.file_sender_worker.progress.connect(self.update_progress)
+        self.file_sender_worker.finished.connect(self.on_file_sent)
+        self.file_sender_worker.error.connect(self.show_error)
 
-        # Enviar marcador de fin
-        if not self.send_with_retry(client_socket_files, b":FIN_DEL_ARCHIVO:"):
-            raise Exception("No se pudo enviar el marcador de fin del archivo.")
+        # Iniciar el hilo
+        self.file_sender_worker.start()
+
+    def update_progress(self, progress):
+        """Actualiza la barra de progreso o muestra el progreso."""
+        logger.debug(f"Progreso: {progress}%")
+        # Aquí puedes actualizar la interfaz de usuario con el progreso
+
+    def on_file_sent(self):
+        """Maneja la finalización del envío."""
+        logger.info("Archivo enviado correctamente.")
+        # Aquí puedes mostrar un mensaje en la interfaz de usuario
+
+    def show_error(self, error_message):
+        """Maneja errores."""
+        logger.error(f"Error: {error_message}")
+        # Aquí puedes mostrar un mensaje de error en la interfaz de usuario
 
     def create_private_window_chat(self, recipient_nickname: str, sender_nickname: Optional[str] = None):
         if sender_nickname is None:
@@ -804,7 +885,7 @@ class CheckPrivateIncomingMessagesWorker(QObject):
             try:
                 mensaje, address = self.server.incoming_queue.get(timeout=0.1) # TODO: guardar el address
                 logger.debug("Mensaje recibido en CheckPrivateIncomingMessagesWorker process_messages: %s", mensaje)
-                # Emitir el mensaje recibido para actualizar la GUI en el hilo principal
+                # esto llama a update_private_chat_files
                 self.messageReceived.emit(f"{self.sender_nickname}:{mensaje}")
             except queue.Empty:
                 continue
@@ -888,7 +969,7 @@ class CheckPrivateIncomingFilesWorker(QObject):
                         percentage = int((received_size / file_size) * 100)
                     # esto llama a update_private_chat_files
                     logger.debug("Porcentaje procesado actualmente %s", percentage)
-                    if percentage % 10 == 0:
+                    if percentage % 5 == 0:
                         self.messageReceived.emit(sender_nickname, file_name, file_size, file_data, percentage)
                     # Enviar ACK al remitente
                     #self.client_files.send_ack()
