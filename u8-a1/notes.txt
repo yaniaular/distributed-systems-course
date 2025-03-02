@@ -1,0 +1,10 @@
+Errores que a veces pasan:
+
+
+_message** [Recibido en None] JOIN_CHATROOM de yani
+Traceback (most recent call last):
+  File "/Users/yanina/Documents/Maestria Big Data/Sistemas Distribuidos/u8-a1/send_files.py", line 1063, in handle_incoming_message
+    MY_CHATROOM.update_user_list()
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'NoneType' object has no attribute 'update_user_list'
+zsh: abort      python3 send_files.py slave 30001

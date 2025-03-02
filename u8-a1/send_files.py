@@ -73,16 +73,16 @@ def get_ip_local():
         ip_local = "127.0.0.1"
     finally:
         s.close()
-    logger.debug("IP local: %s", ip_local)
+    logger.debug("Getting IP local: %s", ip_local)
     return ip_local
 
 def get_free_port():
     if IS_MASTER:
         port = AVAILABLE_PORTS_MASTER.pop(0)
-        logger.info("Usando puerto maestro %s", port)
+        logger.info("Tomando un puerto para el nodo maestro %s", port)
         return port
     port = AVAILABLE_PORTS_SLAVE.pop(0)
-    logger.info("Usando puerto esclavo %s", port)
+    logger.info("Tomando un puerto para el nodo slave %s", port)
     return port
 
 THREAD_ORCHESTRATOR = None
@@ -116,9 +116,6 @@ def terminate_application():
             user_info.client.close()
         if user_info.private_chat:
             user_info.private_chat.close()
-        if user_info.check_incoming_messages:
-            user_info.check_incoming_messages.stop()
-            user_info.check_incoming_messages.quit()
     if WORKER_ORCHESTRATOR:
         WORKER_ORCHESTRATOR.stop()
     if THREAD_ORCHESTRATOR.isRunning():
@@ -141,13 +138,13 @@ class ServerTCP:
                  type_of_data_to_receive: str = "TEXT",
                  buffer_size: Optional[int] = 1024,
                  maximum_connections: Optional[int] = 10):
-        logger.info("Configurando servidor...")
+        logger.debug("Configurando servidor en __init__ ...")
         self.name = name
         self.ip = ip
         self.port = port
-        logger.info("[%s]: Usando IP: %s - Usando puerto: %s", self.name, self.ip, self.port)
         self.incoming_queue = multiprocessing.Queue()
-        self.address = (ip, self.port)
+        self.address = (self.ip, self.port)
+        logger.debug("[%s]: Usando IP: %s - Usando puerto: %s - En resumen address: %s", self.name, self.ip, self.port, str(self.address))
         self.buffer_size = buffer_size
         self.maximum_connections = maximum_connections
         self.type_of_data_to_receive = type_of_data_to_receive
@@ -174,6 +171,8 @@ class ServerTCP:
         server_socket.listen(maximum_connections)
 
         try:
+            # El puerto en addr es un puerto efímero asignado 
+            # por el sistema operativo del cliente.
             conn, addr = server_socket.accept()
             logger.info("Conexión establecida con: %s", addr)
 
@@ -185,13 +184,20 @@ class ServerTCP:
                         decrypted_msg = caesar_decrypt(msg, SHIFT)
                         incoming_queue.put((decrypted_msg, addr))
                         logger.info("Mensaje recibido de %s: %s", str(addr), str(decrypted_msg))
+                        logger.debug("Enviando ACK de mensaje de texto a %s...", str(addr))
+                        ack = "ACK"
+                        ack_encrypted = caesar_encrypt(ack, SHIFT)
+                        conn.sendall(ack_encrypted.encode('utf-8'))
                     else:
                         # logger.debug("Recibido fragmento en server_process")
                         # TODO: hacer algo con el fragmento
+                        logger.debug("Recibido fragmento en server_process")
                         incoming_queue.put((data, addr))
-                    ack = "ACK"
-                    ack_encrypted = caesar_encrypt(ack, SHIFT)
-                    conn.send(ack_encrypted.encode())
+                        time.sleep(0.1) # para que alcance el worker a procesar el fragmento
+                        logger.debug("Enviando ACK de fragmento a %s...", str(addr))
+                        ack = "ACK"
+                        ack_encrypted = caesar_encrypt(ack, SHIFT)
+                        conn.sendall(ack_encrypted.encode('utf-8'))
         except KeyboardInterrupt:
             logger.warning("\n[KeyboardInterrupt] Servidor cerrando conexión...")
         except Exception as e:
@@ -219,7 +225,20 @@ class ClientTCP:
         self.buffer_size = buffer_size
         self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.client_socket.connect(self.address)
-        logger.info("Conexión establecida con el servidor!")
+        logger.debug("Conexión establecida con el servidor de address %s! ya podemos mandar cosos a esa direccion", self.address)
+
+    def receive_ack(self, timeout=2):
+        self.client_socket.settimeout(timeout)
+        try:
+            ack = self.client_socket.recv(1024)  # Recibir datos del socket
+            if ack == b"ACK":
+                return ack
+            else:
+                raise Exception("ACK inválido recibido")
+        except socket.timeout:
+            raise Exception("Timeout esperando ACK")
+        except Exception as e:
+            raise Exception(f"Error recibiendo ACK: {e}")
 
     def send_message(self, message: str):
         # este se usa desde user_info.client
@@ -354,8 +373,9 @@ class ChatroomWindows(QWidget):
             self.received_files[sender_nickname][file_name] = file_data
             self.save_button[sender_nickname][file_name].setText(f"Save Received File {file_name}: {percentage}%")
             self.save_button[sender_nickname][file_name].clicked.connect(lambda: self.save_file(sender_nickname, file_name, file_data))
-            self.let_know_sender_i_received_file(sender_nickname, file_name)
-        else:
+            # TODO: mostrar un mensaje en la interfaz de que el archivo se recibió correctamente
+            # self.let_know_sender_i_received_file(sender_nickname, file_name)
+        elif percentage % 5 == 0:
             self.save_button[sender_nickname][file_name].setText(f"Save Received File {file_name}: {percentage}%")
 
     def update_user_list(self):
@@ -381,10 +401,13 @@ class ChatroomWindows(QWidget):
         # crear servidor para recibir mensajes de la persona con la que quiero chatear
         if user_info.server_listening is None:
             # si el sender no tiene un servidor tcp para recibir mensajes del recipient, hay que crearlo
-            logger.debug("creando server para recibir mensajes de %s", recipient_nickname)
             port = get_free_port()
+            logger.debug("Creando server para recibir mensajes escritos de %s en el puerto %s", recipient_nickname, port)
             server = ServerTCP(f"server_of_{self.sender_nickname}_to_receive_messages_from_{recipient_nickname}", get_ip_local(), port)
             server.start()
+            # esperar para que el servidor se inicie
+            logger.debug("Esperando 4 SEGUNDOS a que el servidor de mensajes se inicie antes de crear el worker...")
+            time.sleep(4)
             user_info.server_listening = server
 
             # crear worker para procesar mensajes entrantes y actualizar la GUI
@@ -397,7 +420,8 @@ class ChatroomWindows(QWidget):
             self.check_threads[recipient_nickname].start()
 
             # esperar un segundo para que el server se inicie
-            time.sleep(1)
+            logger.debug("Esperando 4 SEGUNDOS a que el Worker de mensajes se inicie antes de solicitar el cliente...")
+            time.sleep(4)
 
             # si el recipient no tiene un cliente para escribirnos hay
             # que enviarle una solicitud al recipient para que cree uno
@@ -406,16 +430,20 @@ class ChatroomWindows(QWidget):
             # si el recipient no tiene un servidor tcp para recibir mensajes
             # de este sender, hay que enviarle una solicitud al recipient
             # para que cree uno
+            time.sleep(2)
             if user_info.client is None:
                 self.send_request_to_create_tcp_server(recipient_nickname)
 
         # crear servidor para recibir archivos de la persona con la que quiero chatear
         if user_info.server_listening_files is None:
             # si el sender no tiene un servidor tcp para recibir archivos del recipient, hay que crearlo
-            logger.debug("creando server para recibir archivos de %s", recipient_nickname)
             port = get_free_port()
+            logger.debug("Creando server para recibir ARCHIVOS de %s en el puerto %s", recipient_nickname, port)
             server = ServerTCP(f"server_of_{self.sender_nickname}_to_receive_files_from_{recipient_nickname}", get_ip_local(), port, "FILES")
             server.start()
+            # esperar para que el servidor se inicie
+            logger.debug("Esperando 4 SEGUNDOS a que el servidor de archivos se inicie antes de crear el worker...")
+            time.sleep(4)
             user_info.server_listening_files = server
 
             # crear worker para procesar archivos entrantes y actualizar la GUI
@@ -428,15 +456,18 @@ class ChatroomWindows(QWidget):
             self.check_threads[recipient_nickname + "files"].start()
 
             # esperar un segundo para que el server se inicie
-            time.sleep(1)
+            logger.debug("Esperando 4 SEGUNDOS a que el Worker de archivos se inicie antes de solicitar el cliente...")
+            time.sleep(4)
 
-            # si el recipient no tiene un cliente para escribirnos hay
-            # que enviarle una solicitud al recipient para que cree uno
-            self.send_request_to_create_tcp_client_files(recipient_nickname, port) # TODO: revisar si es necesario
-               
-            # si el recipient no tiene un servidor tcp para recibir archivos
+            # si el otro nodo no tiene un cliente para escribirnos hay
+            # que enviarle una solicitud para que cree uno
+            logger.debug("Oye %s crea un cliente para que me mandes ACKs de mis archivos", recipient_nickname)
+            self.send_request_to_create_tcp_client_files(recipient_nickname, port)
+            
+            # si el otro nodo no tiene un servidor tcp para recibir archivos
             # de este sender, hay que enviarle una solicitud al recipient
             # para que cree uno
+            time.sleep(2)
             if user_info.client_files is None:
                 self.send_request_to_create_tcp_server_files(recipient_nickname)
 
@@ -453,10 +484,12 @@ class ChatroomWindows(QWidget):
         # crear servidor para recibir mensajes de la persona con la que quiero chatear
         if user_info.server_listening is None:
             # si el sender no tiene un servidor tcp para recibir mensajes del recipient, hay que crearlo
-            logger.debug("creando server para recibir mensajes de %s", recipient_nickname)
             port = get_free_port()
+            logger.debug("Creando server para recibir mensajes escritos de %s en el puerto %s", recipient_nickname, port)
             server = ServerTCP(f"server_of_{self.sender_nickname}_to_receive_messages_from_{recipient_nickname}", get_ip_local(), port)
             server.start()
+            logger.debug("Esperando 4 SEGUNDOS a que el servidor de mensajes se inicie antes de crear el worker...")
+            time.sleep(4)
             user_info.server_listening = server
 
             # crear worker para procesar mensajes entrantes y actualizar la GUI
@@ -467,8 +500,9 @@ class ChatroomWindows(QWidget):
             self.check_threads[recipient_nickname].started.connect(self.check_workers[recipient_nickname].process_messages)
             self.check_threads[recipient_nickname].start()
 
-            # esperar un segundo para que el server se inicie
-            time.sleep(1)
+            logger.debug("Esperando 4 SEGUNDOS a que el Worker de mensajes se inicie antes de solicitar el cliente...")
+            time.sleep(4)
+            user_info.server_listening = server
 
             # si el recipient no tiene un cliente para escribirnos hay
             # que enviarle una solicitud al recipient para que cree uno
@@ -477,8 +511,8 @@ class ChatroomWindows(QWidget):
         # crear servidor para recibir archivos de la persona con la que quiero chatear
         if user_info.server_listening_files is None:
             # si el sender no tiene un servidor tcp para recibir archivos del recipient, hay que crearlo
-            logger.debug("creando server para recibir archivos de %s", recipient_nickname)
             port = get_free_port()
+            logger.debug("Creando server para recibir ARCHIVOS de %s en el puerto %s", recipient_nickname, port)
             server = ServerTCP(f"server_of_{self.sender_nickname}_to_receive_files_from_{recipient_nickname}", get_ip_local(), port, "FILES")
             server.start()
             user_info.server_listening = server
@@ -492,7 +526,8 @@ class ChatroomWindows(QWidget):
             self.check_threads[recipient_nickname + "files"].start()
 
             # esperar un segundo para que el server se inicie
-            time.sleep(1)
+            logger.debug("Esperando 4 SEGUNDOS a que el Worker de archivos se inicie antes de solicitar el cliente...")
+            time.sleep(4)
 
             # si el recipient no tiene un cliente para escribirnos hay
             # que enviarle una solicitud al recipient para que cree uno
@@ -530,6 +565,30 @@ class ChatroomWindows(QWidget):
             client_socket = sender_info.client
             client_socket.send_message(f"Archivo {file_name} enviado satisfactoriamente.")
 
+    def send_with_retry(self, client_socket: ClientTCP, fragment, max_retries=3, timeout=2):
+        retries = 0
+        while retries < max_retries:
+            client_socket.send_fragment(fragment) # sendall
+            
+            # Esperar ACK del receptor
+            try:
+                ack = client_socket.client_socket.recv(1024)  # Recibe el ACK
+                ack_decrypted = caesar_decrypt(ack.decode('utf-8'), SHIFT)  # Descifra el ACK
+                logger.debug("ACK recibido???: %s", ack_decrypted)
+                if ack_decrypted == "ACK":
+                    return True  # ACK recibido, fragmento enviado correctamente
+            
+            except Exception as e:
+                logger.error("Error recibiendo ACK: %s", e)
+                logger.warning(f"No se recibió ACK. Reintentando... ({retries + 1}/{max_retries})")
+            
+            retries += 1
+            time.sleep(2)  # Esperar antes de reintentar
+        
+        logger.error(f"No se pudo enviar el fragmento después de {max_retries} intentos.")
+        return False  # No se pudo enviar el fragmento después de los reintentos
+
+
     def select_and_send_file(self, recipient_nickname):
         logger.debug("Seleccionar archivo para enviar a %s", recipient_nickname)
         file_path, _ = QFileDialog.getOpenFileName()
@@ -539,22 +598,32 @@ class ChatroomWindows(QWidget):
         file_size = os.path.getsize(file_path)
 
         client_socket = USER_INFO_BY_NICKNAME[recipient_nickname].client
+        logger.debug("Obtener el client_files de %s", recipient_nickname)
         client_socket_files = USER_INFO_BY_NICKNAME[recipient_nickname].client_files
+        
         # Enviar metadatos del archivo
-        client_socket.send_message(f"FILE:{file_name}:{file_size}")
+        # client_socket.send_message(f"FILE:{file_name}:{file_size}") # TODO borrar
 
         self.text_box[recipient_nickname].append(f"Enviando Archivo {file_name}...")
-        time.sleep(2) # para que de tiempo de guardar la informacion del size en el recipient
-        # Enviar el archivo en fragmentos
+        time.sleep(1) # para que alcance a actualizar la interfaz
+
+        # Envío del archivo
         info_marker = f"INICIO_DEL_ARCHIVO:{file_name}:{file_size}:{self.sender_nickname}".encode('utf-8')
-        client_socket_files.send_fragment(info_marker)
+        if not self.send_with_retry(client_socket_files, info_marker):
+            raise Exception("No se pudo enviar el marcador de inicio del archivo.")
+        
+        # Enviar el archivo en fragmentos
         with open(file_path, 'rb') as file:
             while True:
                 chunk = file.read(1024)
                 if not chunk:
                     break
-                client_socket_files.send_fragment(chunk)
-        client_socket_files.send_fragment(b":FIN_DEL_ARCHIVO:")
+                if not self.send_with_retry(client_socket_files, chunk):
+                    raise Exception(f"No se pudo enviar un fragmento del archivo {file_name}.")
+
+        # Enviar marcador de fin
+        if not self.send_with_retry(client_socket_files, b":FIN_DEL_ARCHIVO:"):
+            raise Exception("No se pudo enviar el marcador de fin del archivo.")
 
     def create_private_window_chat(self, recipient_nickname: str, sender_nickname: Optional[str] = None):
         if sender_nickname is None:
@@ -632,18 +701,21 @@ class ChatroomWindows(QWidget):
 
             for nickname, user_info in USER_INFO_BY_NICKNAME.items():
                 logger.debug("nickname %s", nickname)
+                logger.debug("recipient_nickname %s", recipient_nickname)
                 logger.debug("user_info.client %s", user_info.client)
                 logger.debug("user_info.server_listening %s", user_info.server_listening)
-                logger.debug("user_info.check_incoming_messages %s", user_info.check_incoming_messages)
                 logger.debug("user_info.private_chat %s", user_info.private_chat)
                 logger.debug("user_info.visual_chat %s", user_info.visual_chat)
                 logger.debug("user_info.entry_message %s", user_info.entry_message)
 
             logger.debug("Enviando mensaje a %s: %s", recipient_nickname, message)
-            recipient_user_info = USER_INFO_BY_NICKNAME[recipient_nickname]
-            client_socket = recipient_user_info.client
-            data = client_socket.send_message(message)
-            logger.debug("Servidor: %s", data)
+            try:
+                recipient_user_info = USER_INFO_BY_NICKNAME[recipient_nickname]
+                client_socket = recipient_user_info.client
+                data = client_socket.send_message(message)
+                logger.debug("Servidor: %s", data)
+            except Exception as e:
+                logger.error("Error al enviar mensaje en send_private_message: %s", e)
 
     def send_request_to_create_tcp_server(self, recipient_nickname):
         """ This method send a request to create a tcp server in the recipient side
@@ -731,7 +803,7 @@ class CheckPrivateIncomingMessagesWorker(QObject):
         while self.running:
             try:
                 mensaje, address = self.server.incoming_queue.get(timeout=0.1) # TODO: guardar el address
-                logger.debug("Mensaje recibido en worker process_messages: %s", mensaje)
+                logger.debug("Mensaje recibido en CheckPrivateIncomingMessagesWorker process_messages: %s", mensaje)
                 # Emitir el mensaje recibido para actualizar la GUI en el hilo principal
                 self.messageReceived.emit(f"{self.sender_nickname}:{mensaje}")
             except queue.Empty:
@@ -746,12 +818,13 @@ class CheckPrivateIncomingMessagesWorker(QObject):
 class CheckPrivateIncomingFilesWorker(QObject):
     messageReceived = pyqtSignal(str, str, int, bytearray, int)  # Emitirá el mensaje recibido
 
-    def __init__(self, server, sender_nickname):
+    def __init__(self, server: ServerTCP, sender_nickname):
         super().__init__()
         self.server = server
-        self.sender_nickname = sender_nickname
+        self.sender_nickname = sender_nickname # nickname del usuario que envía el archivo
         self.running = True
-        logger.info("************ CheckPrivateIncomingFilesWorker creado para %s", sender_nickname)
+        self.client_files: ClientTCP = None
+        logger.info("CheckPrivateIncomingFilesWorker creado para %s", sender_nickname)
 
     def process_files(self):
         file_size = 0
@@ -759,6 +832,16 @@ class CheckPrivateIncomingFilesWorker(QObject):
         file_data = bytearray()
         sender_nickname = ""
         file_name = ""
+
+        logger.debug("Intentando obtener el cliente de %s", self.sender_nickname)
+        get_client = True
+        while get_client:
+            if self.client_files is None:
+                self.client_files = USER_INFO_BY_NICKNAME[self.sender_nickname].client_files
+                if self.client_files is not None:
+                    logger.debug("CLIENTE DE ARCHIVOS DE %s OBTENIDO!!!", self.sender_nickname)
+                    get_client = False
+
         while self.running:
             try:
                 mensaje, address = self.server.incoming_queue.get(timeout=0.1)
@@ -766,6 +849,8 @@ class CheckPrivateIncomingFilesWorker(QObject):
                 if b":FIN_DEL_ARCHIVO:" in mensaje:
                     logger.debug("Fin de envio del archivo %s... from: %s", file_name, self.sender_nickname)
                     self.messageReceived.emit(self.sender_nickname, file_name, file_size, file_data, 100) 
+                    # Enviar ACK al remitente
+                    #self.client_files.send_ack()
                     continue
 
                 try:
@@ -785,6 +870,13 @@ class CheckPrivateIncomingFilesWorker(QObject):
                             # Abrir el archivo para escritura
                             logger.debug("Datos recibidos\nNombre: %s\nTamaño: %s\nRemitente: %s", file_name, file_size, self.sender_nickname)
 
+                            # Enviar ACK al remitente
+                            #ack = "ACK"
+                            #ack_encrypted = caesar_encrypt(ack, SHIFT)
+                            #self.client_files.client_socket.sendall(ack_encrypted.encode())
+                            #logger.debug("ACK enviado a %s", self.client_files.address)
+                            #self.client_files.send_ack()
+
                 except UnicodeDecodeError:
                     # Si no se puede decodificar, es un chunk binario
                     file_data.extend(mensaje)
@@ -795,8 +887,11 @@ class CheckPrivateIncomingFilesWorker(QObject):
                     else:
                         percentage = int((received_size / file_size) * 100)
                     # esto llama a update_private_chat_files
-                    self.messageReceived.emit(sender_nickname, file_name, file_size, file_data, percentage)
-
+                    logger.debug("Porcentaje procesado actualmente %s", percentage)
+                    if percentage % 10 == 0:
+                        self.messageReceived.emit(sender_nickname, file_name, file_size, file_data, percentage)
+                    # Enviar ACK al remitente
+                    #self.client_files.send_ack()
             except queue.Empty:
                 continue
             except Exception as e:
@@ -905,7 +1000,6 @@ class UserInfo:
         self.nickname = nickname
         self.server_listening = None # servidor tcp para recibir mensajes de este usuario
         self.server_listening_files = None # servidor tcp para recibir archivos de este usuario
-        self.check_incoming_messages = None # hilo para revisar mensajes que esten en la cola
         self.client = None # cliente tcp para enviar mensajes a este usuario
         self.client_files = None # cliente tcp para enviar archivos a este usuario
         self.private_chat = None # ventana de chat privado con este usuario es de tipo QMainWindow
@@ -1021,6 +1115,7 @@ def handle_incoming_message(arguments, is_master):
             sender_ip = arguments[3]
             sender_port = int(arguments[4])
             user_info = USER_INFO_BY_NICKNAME.get(sender_nickname)
+            logger.debug("Ok, crear cliente para enviar mensajes escritos a %s", sender_nickname)
             if not user_info:
                 USER_INFO_BY_NICKNAME[sender_nickname] = UserInfo(sender_nickname)
                 user_info = USER_INFO_BY_NICKNAME[sender_nickname]
@@ -1050,11 +1145,12 @@ def handle_incoming_message(arguments, is_master):
             sender_ip = arguments[3]
             sender_port = int(arguments[4])
             user_info = USER_INFO_BY_NICKNAME.get(sender_nickname)
+            logger.debug("Ok, crear cliente para enviar ACK/archivos a %s", sender_nickname)
             if not user_info:
                 USER_INFO_BY_NICKNAME[sender_nickname] = UserInfo(sender_nickname)
                 user_info = USER_INFO_BY_NICKNAME[sender_nickname]
             if user_info.client_files is None:
-                print(f"Intentando crear cliente para enviar mensajes a {sender_nickname} - {sender_ip}:{sender_port}")
+                logger.debug("Intentando crear cliente para enviar files a %s - %s: %s", sender_nickname, sender_ip, sender_port)
                 client_socket_files = ClientTCP(f"client_of_{recipient_nickname}_to_send_files_to_{sender_nickname}", sender_ip, sender_port)
                 user_info.client_files = client_socket_files
         
@@ -1071,7 +1167,7 @@ def main():
     ip_multicast = "224.0.0.0"
     is_master = True if len(sys.argv) > 1 and sys.argv[1] == "master" else False
     IS_MASTER = is_master
-    MY_MULTICAST_PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 30000
+    MY_MULTICAST_PORT = int(sys.argv[2]) if len(sys.argv) >= 2 else 30000
 
     logger.debug("ip_multicast %s", ip_multicast)
     logger.debug("is_master %s", is_master)
