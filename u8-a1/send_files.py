@@ -380,6 +380,7 @@ class ChatroomWindows(QWidget):
         # buttons to play and save files
         self.save_button = {} # Diccionario para almacenar los botones de guardar archivo
         self.play_button = {} # Diccionario para almacenar los botones de reproducir archivo
+        self.player_widget = {} # Diccionario para almacenar los reproductores de video
         
         # workers
         self.play_file_worker = {} # Diccionario para almacenar los workers de reproducción de archivos, key: nombre del archivo, value: worker
@@ -407,15 +408,10 @@ class ChatroomWindows(QWidget):
         placeholder_item.setFont(QFont("Arial", 10, QFont.StyleItalic))
         self.list_users.addItem(placeholder_item) # Agregar el placeholder al QListWidget
 
-        # Crear una instancia de Player
-        self.player_widget = None
-
-
         # Add widgets to the layout
         self.main_layout.addWidget(text_title)
         self.main_layout.addWidget(self.btn_create_group)
         self.main_layout.addWidget(self.list_users)
-        #self.main_layout.addWidget(self.player_widget)
 
         # Establecer el layout principal en la ventana
         self.setLayout(self.main_layout)
@@ -456,20 +452,39 @@ class ChatroomWindows(QWidget):
             else:
                 logger.error("No se encontró la clave en text_box")
 
-    def play_file(self, temp_file_path):
-        """Abre la ventana de reproducción de video."""
-        #self.video_player_window = VideoPlayerWindow(temp_file_path)
-        #self.video_player_window.show()
+    def delete_player_widget(self, sender_nickname, file_name):
+        if sender_nickname in self.player_widget:
+            if file_name in self.player_widget[sender_nickname]:
+                del self.player_widget[sender_nickname][file_name]
+                logger.debug("Player widget eliminado de la lista")
 
+        if sender_nickname in self.play_button:
+            if file_name in self.play_button[sender_nickname]:
+                self.play_button[sender_nickname][file_name].setEnabled(True)
+
+    def play_file(self, sender_nickame, file_name):
+        """Abre la ventana de reproducción de video."""
         # Mostrar la ventana del reproductor
-        self.player_widget = Player()
-        self.player_widget.show()
+        if sender_nickame not in self.player_widget:
+            self.player_widget[sender_nickame] = {}
+
+        if file_name not in self.player_widget[sender_nickame]:
+            self.player_widget[sender_nickame][file_name] = Player() 
+            # borrar la instancia cuando se cierre la ventana
+            #self.player_widget[sender_nickame][file_name].close.connect(lambda: self.delete_player_widget(sender_nickame, file_name))
+            self.player_widget[sender_nickame][file_name].window_closed.connect(lambda: self.delete_player_widget(sender_nickame, file_name))
+            self.play_button[sender_nickame][file_name].setText(f"Reproduciendo: {file_name}")
+            self.play_button[sender_nickame][file_name].setEnabled(False)
+
+        self.player_widget[sender_nickame][file_name].show()
 
         # Cambiar el tamaño de la ventana
-        self.player_widget.resize(640, 480)
+        self.player_widget[sender_nickame][file_name].resize(640, 480)
+
+        file_path = self.received_files[sender_nickame][file_name]
 
         # Abrir un archivo de video (opcional)
-        self.player_widget.OpenFile(temp_file_path)
+        self.player_widget[sender_nickame][file_name].OpenFile(file_path)
 
     def save_file(self, sender_nickname, temp_file_path, file_name):
         """ Guarda el archivo en la ubicación seleccionada por el usuario """
@@ -480,22 +495,18 @@ class ChatroomWindows(QWidget):
             self, "Guardar archivo", file_name, "Todos los archivos (*)", options=options
         )
         if file_path:
-            try:
-                # Mover el archivo temporal a la ubicación seleccionada
-                shutil.move(temp_file_path, file_path)
-                logger.debug("Archivo guardado en: %s", file_path)
-                self.text_box[sender_nickname].append(f"Archivo {file_name} guardado en {file_path}.")
+            # Mover el archivo temporal a la ubicación seleccionada
+            shutil.move(temp_file_path, file_path)
+            logger.debug("Archivo guardado en: %s", file_path)
+            self.text_box[sender_nickname].append(f"Archivo {file_name} guardado en {file_path}.")
 
-                # Eliminar la entrada del diccionario
-                del self.received_files[sender_nickname][file_name]
-
-                # Deshabilitar el botón de guardar
-                self.save_button[sender_nickname][file_name].setEnabled(False)
-                self.save_button[sender_nickname][file_name].setText(f"Archivo ya fue guardado: {file_name}.")
-                self.play_button[sender_nickname][file_name].clicked.connect(lambda: self.play_file(file_path))
-            except Exception as e:
-                logger.error(f"Error al guardar el archivo: {e}")
-                self.text_box[sender_nickname].append(f"Error al guardar el archivo {file_name}.")
+            # Deshabilitar el botón de guardar
+            self.save_button[sender_nickname][file_name].setEnabled(False)
+            self.save_button[sender_nickname][file_name].setText(f"Archivo ya fue guardado: {file_name}.")
+            
+            temp_file_path = self.received_files[sender_nickname][file_name]
+            logger.debug("Play button cambia de temp path: %s, al nuevo path %s", temp_file_path, file_path)
+            self.received_files[sender_nickname][file_name] = file_path
 
     def create_temporary_file(self, sender_nickname, file_name, temp_file_path):
         """Crea un archivo temporal y lo prepara para recibir fragmentos."""
@@ -529,7 +540,7 @@ class ChatroomWindows(QWidget):
             self.play_button[sender_nickname][file_name].setEnabled(True)
             self.layout[sender_nickname].layout().addWidget(self.play_button[sender_nickname][file_name])
             # TODO luego este debe ser el path donde lo guardo el usuario
-            self.play_button[sender_nickname][file_name].clicked.connect(lambda: self.play_file(temp_file_path))
+            self.play_button[sender_nickname][file_name].clicked.connect(lambda: self.play_file(sender_nickname, file_name))
 
         if file_name not in self.progress_bar_received[sender_nickname].getLabelTex():
             self.progress_bar_received[sender_nickname].setLabelText(f"Recibiendo {file_name}...")

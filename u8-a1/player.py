@@ -2,16 +2,12 @@ from PyQt5.QtWidgets import QWidget, QFrame, QSlider, QHBoxLayout, QPushButton, 
 import vlc
 import time
 import sys
-from PyQt5.QtCore import Qt, QTimer
-
-
-import sys
-import vlc
-from PyQt5.QtWidgets import QApplication, QMainWindow, QLabel, QVBoxLayout, QWidget
-from PyQt5.QtCore import QTimer
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 
 
 class Player(QWidget):
+    window_closed = pyqtSignal()
+
     """Un reproductor de video usando VLC y Qt."""
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -29,6 +25,7 @@ class Player(QWidget):
         self.positionslider.setToolTip("Position")
         self.positionslider.setMaximum(1000)
         self.positionslider.sliderMoved.connect(self.setPosition)
+        #self.positionslider.sliderReleased.connect(self.setPosition)
 
         # Etiqueta para mostrar el tiempo
         self.time_label = QLabel("00:00 / 00:00", self)
@@ -63,12 +60,8 @@ class Player(QWidget):
         self.stopbutton.clicked.connect(self.Stop)
 
         self.timer = QTimer(self)
-        self.timer.setInterval(200)
+        self.timer.setInterval(100)
         self.timer.timeout.connect(self.updateUI)
-
-        self.timer = QTimer(self)
-        self.timer.setInterval(100) # son en segundos: 1000 ms = 1 segundo
-        self.timer.timeout.connect(self.updateTimeLabel)
 
     def PlayPause(self):
         """Alternar entre play/pause."""
@@ -91,8 +84,16 @@ class Player(QWidget):
         self.timer.stop()
 
     def setPosition(self, position):
-        """Establecer la posición."""
-        self.mediaplayer.set_position(position / 1000.0)
+        if self.mediaplayer.is_playing():
+            # Obtener la posición del slider (0-1000) y convertirla a un valor entre 0 y 1
+            position = self.positionslider.value()
+            vlc_position = position / 1000.0
+
+            # Establecer la posición en VLC
+            try:
+                self.mediaplayer.set_position(vlc_position)
+            except Exception as e:
+                print(f"Error al establecer la posición: {e}")
 
     def ms_to_time_str(self, milliseconds):
         """Convertir milisegundos a una cadena en formato minutos:segundos."""
@@ -116,12 +117,18 @@ class Player(QWidget):
         # Actualizar el QLabel
         self.time_label.setText(f"{current_time_str} / {total_time_str}")
 
+    def updateSlider(self):
+        """Actualizar el tiempo en el QLabel."""
+        current_time = self.mediaplayer.get_time()  # Tiempo actual en milisegundos
+        total_time = self.mediaplayer.get_length()  # Duración total en milisegundos
+
+        # Actualizar el QSlider
+        if total_time > 0:
+            position = current_time / total_time
+            self.positionslider.setValue(int(position * 1000))
+
     def OpenFile(self, filename):
         """Abrir un archivo de video."""
-        # create the media
-        #if sys.version < '3':
-        #    filename = str(filename)
-
         self.media = self.instance.media_new(filename)
         self.mediaplayer.set_media(self.media)
 
@@ -148,29 +155,17 @@ class Player(QWidget):
         while self.mediaplayer.get_state() != vlc.State.Playing:
             time.sleep(0.1)  # Esperar hasta que el video esté en estado "Playing"
 
-        # Obtener la duración del video en milisegundos
-        duration_ms = self.mediaplayer.get_length()
-        seconds = duration_ms / 1000  # Convertir milisegundos a segundos
-        minutes = seconds / 60        # Convertir segundos a minutos
-        duration_minutes = round(minutes, 2)
-        print(f"**** Current time of the video: {duration_minutes} minutes")
         self.updateTimeLabel()
-
-    def format_time(self, milliseconds):
-        """Formatear el tiempo en minutos y segundos."""
-        seconds = milliseconds // 1000
-        minutes = seconds // 60
-        seconds %= 60
-        return f"{minutes:02}:{seconds:02}"
+        self.updateSlider()
 
     def updateUI(self):
         """updates the user interface"""
         # setting the slider to the desired position
-        self.positionslider.setValue(int(self.mediaplayer.get_position() * 1000))
+        # self.positionslider.setValue(int(self.mediaplayer.get_position() * 1000))
 
         if self.mediaplayer.is_playing():
-            pass
-
+            self.updateTimeLabel()
+            self.updateSlider()
         else:
             # no need to call this function if nothing is played
             self.timer.stop()
@@ -186,12 +181,12 @@ class Player(QWidget):
         if self.mediaplayer.is_playing():
             self.mediaplayer.pause()
             self.isPaused = True
-
         self.mediaplayer.stop()
         self.mediaplayer.release()
         self.timer.stop()
         self.instance.release()
 
-
+        # Emitir la señal personalizada
+        self.window_closed.emit()
         # Aceptar el evento de cierre
         event.accept()
