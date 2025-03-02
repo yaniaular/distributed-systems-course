@@ -406,8 +406,8 @@ class ChatroomWindows(QWidget):
             server = ServerTCP(f"server_of_{self.sender_nickname}_to_receive_messages_from_{recipient_nickname}", get_ip_local(), port)
             server.start()
             # esperar para que el servidor se inicie
-            logger.debug("Esperando 4 SEGUNDOS a que el servidor de mensajes se inicie antes de crear el worker...")
-            time.sleep(4)
+            logger.debug("Esperando 2 SEGUNDOS a que el servidor de mensajes se inicie antes de crear el worker...")
+            time.sleep(2)
             user_info.server_listening = server
 
             # crear worker para procesar mensajes entrantes y actualizar la GUI
@@ -420,8 +420,8 @@ class ChatroomWindows(QWidget):
             self.check_threads[recipient_nickname].start()
 
             # esperar un segundo para que el server se inicie
-            logger.debug("Esperando 4 SEGUNDOS a que el Worker de mensajes se inicie antes de solicitar el cliente...")
-            time.sleep(4)
+            logger.debug("Esperando 2 SEGUNDOS a que el Worker de mensajes se inicie antes de solicitar el cliente...")
+            time.sleep(2)
 
             # si el recipient no tiene un cliente para escribirnos hay
             # que enviarle una solicitud al recipient para que cree uno
@@ -442,8 +442,8 @@ class ChatroomWindows(QWidget):
             server = ServerTCP(f"server_of_{self.sender_nickname}_to_receive_files_from_{recipient_nickname}", get_ip_local(), port, "FILES")
             server.start()
             # esperar para que el servidor se inicie
-            logger.debug("Esperando 4 SEGUNDOS a que el servidor de archivos se inicie antes de crear el worker...")
-            time.sleep(4)
+            logger.debug("Esperando 2 SEGUNDOS a que el servidor de archivos se inicie antes de crear el worker...")
+            time.sleep(2)
             user_info.server_listening_files = server
 
             # crear worker para procesar archivos entrantes y actualizar la GUI
@@ -456,8 +456,8 @@ class ChatroomWindows(QWidget):
             self.check_threads[recipient_nickname + "files"].start()
 
             # esperar un segundo para que el server se inicie
-            logger.debug("Esperando 4 SEGUNDOS a que el Worker de archivos se inicie antes de solicitar el cliente...")
-            time.sleep(4)
+            logger.debug("Esperando 2 SEGUNDOS a que el Worker de archivos se inicie antes de solicitar el cliente...")
+            time.sleep(2)
 
             # si el otro nodo no tiene un cliente para escribirnos hay
             # que enviarle una solicitud para que cree uno
@@ -488,8 +488,8 @@ class ChatroomWindows(QWidget):
             logger.debug("Creando server para recibir mensajes escritos de %s en el puerto %s", recipient_nickname, port)
             server = ServerTCP(f"server_of_{self.sender_nickname}_to_receive_messages_from_{recipient_nickname}", get_ip_local(), port)
             server.start()
-            logger.debug("Esperando 4 SEGUNDOS a que el servidor de mensajes se inicie antes de crear el worker...")
-            time.sleep(4)
+            logger.debug("Esperando 2 SEGUNDOS a que el servidor de mensajes se inicie antes de crear el worker...")
+            time.sleep(2)
             user_info.server_listening = server
 
             # crear worker para procesar mensajes entrantes y actualizar la GUI
@@ -500,8 +500,8 @@ class ChatroomWindows(QWidget):
             self.check_threads[recipient_nickname].started.connect(self.check_workers[recipient_nickname].process_messages)
             self.check_threads[recipient_nickname].start()
 
-            logger.debug("Esperando 4 SEGUNDOS a que el Worker de mensajes se inicie antes de solicitar el cliente...")
-            time.sleep(4)
+            logger.debug("Esperando 2 SEGUNDOS a que el Worker de mensajes se inicie antes de solicitar el cliente...")
+            time.sleep(2)
             user_info.server_listening = server
 
             # si el recipient no tiene un cliente para escribirnos hay
@@ -526,8 +526,8 @@ class ChatroomWindows(QWidget):
             self.check_threads[recipient_nickname + "files"].start()
 
             # esperar un segundo para que el server se inicie
-            logger.debug("Esperando 4 SEGUNDOS a que el Worker de archivos se inicie antes de solicitar el cliente...")
-            time.sleep(4)
+            logger.debug("Esperando 2 SEGUNDOS a que el Worker de archivos se inicie antes de solicitar el cliente...")
+            time.sleep(2)
 
             # si el recipient no tiene un cliente para escribirnos hay
             # que enviarle una solicitud al recipient para que cree uno
@@ -602,9 +602,9 @@ class ChatroomWindows(QWidget):
         client_socket_files = USER_INFO_BY_NICKNAME[recipient_nickname].client_files
         
         # Enviar metadatos del archivo
-        # client_socket.send_message(f"FILE:{file_name}:{file_size}") # TODO borrar
+        client_socket.send_message(f"FILE:{file_name}:{file_size}")
 
-        self.text_box[recipient_nickname].append(f"Enviando Archivo {file_name}...")
+        #self.text_box[recipient_nickname].append(f"Enviando Archivo {file_name}...")
         time.sleep(1) # para que alcance a actualizar la interfaz
 
         # Envío del archivo
