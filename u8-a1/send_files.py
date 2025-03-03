@@ -473,7 +473,6 @@ class ChatroomWindows(QWidget):
         if file_name not in self.player_widget[sender_nickame]:
             self.player_widget[sender_nickame][file_name] = Player(file_path)
             # borrar la instancia cuando se cierre la ventana
-            #self.player_widget[sender_nickame][file_name].close.connect(lambda: self.delete_player_widget(sender_nickame, file_name))
             self.player_widget[sender_nickame][file_name].window_closed.connect(lambda: self.delete_player_widget(sender_nickame, file_name))
             self.play_button[sender_nickame][file_name].setText(f"Reproduciendo: {file_name}")
             self.play_button[sender_nickame][file_name].setEnabled(False)
@@ -1092,9 +1091,9 @@ class CheckPrivateIncomingFilesWorker(QObject):
                     else:
                         percentage = int((received_size / file_size) * 100)
 
-                    #if percentage % 2 == 0:
-                    #    logger.debug("Porcentaje procesado actualmente %s", percentage)
-                    #    logger.debug("Fragmento/chunk recibido en process_files %s/%s bytes", received_size, file_size)
+                    if percentage % 2 == 0:
+                        logger.debug("Porcentaje procesado actualmente %s", percentage)
+                        logger.debug("Fragmento/chunk recibido en process_files %s/%s bytes", received_size, file_size)
 
                     # si el archivo es menor a 300 mb, se actualiza cada 5%
                     if file_size < 300000000:
@@ -1367,8 +1366,6 @@ def handle_incoming_message(arguments, is_master):
                 logger.debug("Intentando crear cliente para enviar files a %s - %s: %s", sender_nickname, sender_ip, sender_port)
                 client_socket_files = ClientTCP(f"client_of_{recipient_nickname}_to_send_files_to_{sender_nickname}", sender_ip, sender_port)
                 user_info.client_files = client_socket_files
-        
-
 
 def main():
     # python send_files.py <server_type> <multicast_port>
@@ -1406,13 +1403,8 @@ def main():
     ventana = MainWindow()
     ventana.show()
 
-    # AQUÍ haces el bucle principal; la ventana se ve
+    # Bucle principal; la ventana se ve
     ret = app.exec_()
-    # CUANDO se cierra la ventana, app.exec_() regresa:
-    #WORKER_ORCHESTRATOR.stop()
-    #THREAD_ORCHESTRATOR.quit()
-    #THREAD_ORCHESTRATOR.wait()
-
     sys.exit(ret)
 
 if __name__ == "__main__":
