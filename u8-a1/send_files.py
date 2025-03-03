@@ -1091,9 +1091,9 @@ class CheckPrivateIncomingFilesWorker(QObject):
                     else:
                         percentage = int((received_size / file_size) * 100)
 
-                    if percentage % 2 == 0:
-                        logger.debug("Porcentaje procesado actualmente %s", percentage)
-                        logger.debug("Fragmento/chunk recibido en process_files %s/%s bytes", received_size, file_size)
+                    #if percentage % 2 == 0:
+                    #    logger.debug("Porcentaje procesado actualmente %s", percentage)
+                    #    logger.debug("Fragmento/chunk recibido en process_files %s/%s bytes", received_size, file_size)
 
                     # si el archivo es menor a 300 mb, se actualiza cada 5%
                     if file_size < 300000000:
