@@ -1042,6 +1042,8 @@ class CheckPrivateIncomingFilesWorker(QObject):
                     logger.debug("CLIENTE DE ARCHIVOS DE %s OBTENIDO!!!", self.sender_nickname)
                     get_client = False
 
+        # Variable para almacenar el tiempo de la última ejecución
+        last_execution_time = time.time()
         while self.running:
             try:
                 mensaje, address = self.server.incoming_queue.get(timeout=0.1)
@@ -1077,6 +1079,9 @@ class CheckPrivateIncomingFilesWorker(QObject):
                             # Abrir el archivo para escritura
                             logger.debug("Datos recibidos\nNombre: %s\nTamaño: %s\nRemitente: %s", file_name, file_size, self.sender_nickname)
 
+                            last_execution_time = time.time()
+
+
                 except UnicodeDecodeError: # Si no se puede decodificar (entra en esta excepción), es un chunk binario
                     # Escribir el fragmento en el archivo temporal
                     with open(temp_file_path, 'ab') as temp_file:  # 'ab' para agregar en modo binario
@@ -1087,6 +1092,15 @@ class CheckPrivateIncomingFilesWorker(QObject):
                         percentage = 0
                     else:
                         percentage = int((received_size / file_size) * 100)
+
+
+                    # Obtener el tiempo actual
+                    current_time = time.time()
+
+                    # Verificar si han pasado 30 segundos desde la última ejecución
+                    if current_time - last_execution_time >= 40:
+                        logger.debug("Fragmento recibido %s/%s bytes (%s%%)", received_size, file_size, percentage)
+                        last_execution_time = current_time
 
                     #if percentage % 2 == 0:
                     #    logger.debug("Porcentaje procesado actualmente %s", percentage)
