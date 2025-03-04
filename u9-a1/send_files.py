@@ -10,6 +10,7 @@ import struct
 import errno
 import shutil
 import platform
+import stat
 from player import Player  # Importa la clase Player desde tu archivo
 from typing import Optional, Dict
 from PyQt5.QtCore import QTimer, Qt, QObject, pyqtSignal, QThread
@@ -1070,6 +1071,11 @@ class CheckPrivateIncomingFilesWorker(QObject):
                             temp_file = tempfile.NamedTemporaryFile(delete=False, mode='wb') # No se borrará el archivo al cerrarlo
                             temp_file_path = temp_file.name
                             temp_file.close()  # Cerrar el archivo para que pueda ser escrito más tarde
+
+                            # Dar permisos de lectura y escritura y evitar
+                            # el error en Windows:
+                            # Permission denied: 'C:\\Users\\Ahome\\AppData\\Local\\Temp\\tmpa05loims
+                            os.chmod(temp_file_path, stat.S_IREAD | stat.S_IWRITE)
 
                             self.createTemporaryFile.emit(self.sender_nickname, file_name, temp_file_path)  # Guardar path de archivo temporal
 
