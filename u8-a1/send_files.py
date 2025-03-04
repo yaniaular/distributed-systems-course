@@ -11,10 +11,6 @@ import errno
 import shutil
 import platform
 from player import Player  # Importa la clase Player desde tu archivo
-
-import pyglet
-import ffmpeg
-import vlc
 from typing import Optional, Dict
 from PyQt5.QtCore import QTimer, Qt, QObject, pyqtSignal, QThread
 from PyQt5.QtGui import QFont
