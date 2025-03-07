@@ -1,5 +1,6 @@
 import logging
 import os
+import io
 import sys
 import socket
 import time
@@ -11,10 +12,11 @@ import errno
 import shutil
 import platform
 import stat
+from PIL import Image
 from player import Player  # Importa la clase Player desde tu archivo
 from typing import Optional, Dict
 from PyQt5.QtCore import QTimer, Qt, QObject, pyqtSignal, QThread
-from PyQt5.QtGui import QFont
+from PyQt5.QtGui import QFont, QPixmap
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget, QMessageBox,
     QLabel, QLineEdit, QTextEdit, QHBoxLayout, QListWidget, QListWidgetItem, QFileDialog, QProgressBar
@@ -132,7 +134,7 @@ def terminate_application():
         WORKER_ORCHESTRATOR.stop()
     if THREAD_ORCHESTRATOR.isRunning():
         THREAD_ORCHESTRATOR.quit()
-    if MY_CHATROOM.group_chat:
+    if MY_CHATROOM.group_chat is not None:
         MY_CHATROOM.group_chat.close()
     sys.exit(0)
 
@@ -346,6 +348,65 @@ class FileSenderWorker(QThread):
         except Exception as e:
             self.error.emit(str(e))  # Emitir error
 
+class ProfilePictureSenderWorker():#QThread):
+    #finished = pyqtSignal()     # Señal para indicar que el envío terminó
+    #error = pyqtSignal(str)     # Señal para manejar errores
+
+    def __init__(self, file_path, sender_nickname):
+        super().__init__()
+        self.file_path = file_path
+        self.sender_nickname = sender_nickname
+
+    def send_with_retry(self, client_socket_file, fragment, max_retries=3, timeout=2):
+        retries = 0
+        while retries < max_retries:
+            client_socket_file.send_fragment(fragment)  # Envía el fragmento
+            
+            try: # Esperar ACK del receptor
+                ack = client_socket_file.client_socket.recv(1024)  # Recibe el ACK
+                ack_decrypted = caesar_decrypt(ack.decode('utf-8'), SHIFT)  # Descifra el ACK
+                if ack_decrypted == "ACK":
+                    return True  # ACK recibido, fragmento enviado correctamente
+            except Exception as e:
+                logger.error("Error recibiendo ACK: %s", e)
+                logger.warning(f"No se recibió ACK. Reintentando... ({retries + 1}/{max_retries})")
+            
+            retries += 1
+            time.sleep(2)  # Esperar antes de reintentar
+        
+        logger.error(f"No se pudo enviar el fragmento después de {max_retries} intentos.")
+        return False  # No se pudo enviar el fragmento después de los reintentos
+
+    def run(self): # este se llama cuando se hace start()
+        """Envía el archivo en segundo plano."""
+        # Obtener metadatos del archivo
+        file_name = os.path.basename(self.file_path)
+        file_size = os.path.getsize(self.file_path)
+
+        for recipient_nickname, user_info in USER_INFO_BY_NICKNAME.items(): # enviar mi foto a todo el mundo
+            client_socket_file = user_info.client_files
+            # Enviar marcador de inicio
+            info_marker = f"INICIO_DEL_PROFILE_PICTURE:{file_name}:{file_size}:{self.sender_nickname}".encode('utf-8')
+            logger.debug("Enviando picture a %s, el path es %s, el info marker es %s", recipient_nickname, self.file_path, info_marker)
+            if not self.send_with_retry(client_socket_file, info_marker):
+                raise Exception("No se pudo enviar el marcador de inicio del profile picture.")
+
+            # Enviar el archivo en fragmentos
+            with open(self.file_path, 'rb') as file:
+                sent_size = 0
+                while True:
+                    chunk = file.read(1024)
+                    if not chunk:
+                        break
+                    if not self.send_with_retry(client_socket_file, chunk):
+                        raise Exception(f"No se pudo enviar un fragmento del archivo {file_name}.")
+                    sent_size += len(chunk)
+            # Enviar marcador de fin
+            if not self.send_with_retry(client_socket_file, b":FIN_DEL_PROFILE_PICTURE:"):
+                raise Exception("No se pudo enviar el marcador de fin del archivo.")
+
+            #self.finished.emit()  # Emitir señal de finalización
+
 class ProgressBarWithLabel(QWidget):
     def __init__(self, label_text, parent=None):
         super().__init__(parent)
@@ -368,10 +429,129 @@ class ProgressBarWithLabel(QWidget):
     def getLabelTex(self):
         return self.label.text()
 
+class ProfilePictureWidget(QWidget):
+    # Señal personalizada que notifica cuando la foto se actualiza
+    photo_updated = pyqtSignal(bytes, str)
+
+    def __init__(self):
+        super().__init__()
+        self.photo_bytes = None
+        self.picture_path = None
+        self.init_ui()
+
+    def init_ui(self):
+        layout = QVBoxLayout()
+
+        # Label para mostrar la foto de perfil
+        self.profile_pic = QLabel(self)
+        self.profile_pic.setFixedSize(100, 100)
+        self.profile_pic.setAlignment(Qt.AlignCenter)
+        self.profile_pic.setStyleSheet("border: 1px solid gray; border-radius: 50px;")
+
+        # Botón para subir la foto
+        btn_upload = QPushButton("Subir/Editar foto de perfil", self)
+        btn_upload.clicked.connect(self.upload_picture)
+
+        layout.addWidget(self.profile_pic)
+        layout.addWidget(btn_upload)
+
+        self.setLayout(layout)
+
+    def upload_picture(self):
+        file_name, _ = QFileDialog.getOpenFileName(self, "Seleccionar imagen", "", "Imágenes (*.png *.jpg *.jpeg *.bmp)")
+        if file_name:
+            self.picture_path = file_name
+            # Abrir y convertir la imagen a PNG para estandarizar
+            with Image.open(file_name) as img:
+                img = img.convert("RGB")
+                buffer = io.BytesIO()
+                #img.save(buffer, format="PNG")
+                img.save(buffer, format="JPEG")
+                self.photo_bytes = buffer.getvalue()
+
+            # Mostrar la imagen en el QLabel
+            pixmap = QPixmap()
+            pixmap.loadFromData(self.photo_bytes)
+            self.profile_pic.setPixmap(pixmap.scaled(100, 100, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation))
+
+            # Emitir la señal para notificar la actualización
+            self.photo_updated.emit(self.photo_bytes, self.picture_path)
+
+    def get_image_as_bytes(self):
+        return self.photo_bytes
+    
+    def get_picture_path(self):
+        return self.picture_path
+
+class ImageViewerWidget(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.init_ui()
+        self.picture_path = None
+
+    def save_picture_path(self, picture_path):
+        self.picture_path = picture_path
+
+    def init_ui(self):
+        # Layout principal
+        layout = QVBoxLayout()
+
+        # QLabel para mostrar la imagen
+        self.image_label = QLabel(self)
+        self.image_label.setFixedSize(100, 100)
+        self.image_label.setAlignment(Qt.AlignCenter)
+        self.image_label.setStyleSheet("border: 1px solid gray; border-radius: 50px;")
+
+        layout.addWidget(self.image_label)
+        self.setLayout(layout)
+
+    def set_image_from_path(self, picture_path):
+        """
+        Método para cargar una imagen desde un archivo y mostrarla en el QLabel.
+        :param image_path: Ruta de la imagen.
+        """
+        # Abrir y convertir la imagen a PNG para estandarizar
+        logger.debug("Cargando imagen desde %s", picture_path)
+        with Image.open(picture_path) as img:
+            img = img.convert("RGB")
+            buffer = io.BytesIO()
+            img.save(buffer, format="JPEG")
+            photo_bytes = buffer.getvalue()
+            self.set_image_from_bytes(photo_bytes)
+
+    def set_image_from_bytes(self, image_bytes):
+        """
+        Método para cargar una imagen desde bytes y mostrarla en el QLabel.
+        :param image_bytes: Bytes de la imagen.
+        """
+
+        # Convertir los bytes a una imagen usando Pillow
+        image = Image.open(io.BytesIO(image_bytes))
+
+        # Convertir la imagen a un formato compatible con QPixmap
+        image = image.convert("RGB")
+        
+        # Guardar la imagen en un buffer en formato JPEG
+        buffer = io.BytesIO()
+        image.save(buffer, format="JPEG")
+        jpeg_data = buffer.getvalue()
+
+        # Crear un QPixmap desde los datos de la imagen
+        pixmap = QPixmap()
+        pixmap.loadFromData(jpeg_data, "JPEG")
+
+        # Escalar el QPixmap al tamaño del QLabel
+        
+        self.image_label.setPixmap(
+            pixmap.scaled(100, 100, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+        )
+
+
 class ChatroomWindows(QWidget):
     def __init__(self, nickname: str):
         super().__init__()
         self.sender_nickname = nickname
+        self.my_photo_widget = None
 
         self.chat_windows = {} # Diccionario para almacenar las ventanas de cada chat privado
         self.text_box = {} # Diccionario para almacenar los QTextEdit de cada chat privado
@@ -384,6 +564,7 @@ class ChatroomWindows(QWidget):
 
         self.layout = {} # Diccionario para almacenar los layout de cada chat privado
         self.received_files = {} # Diccionario para almacenar los archivos recibidos, key: sender, value: dict of files
+        self.profile_pictures = {} # Diccionario para almacenar las fotos de perfil de los usuarios
         
         # buttons to play and save files
         self.save_button = {} # Diccionario para almacenar los botones de guardar archivo
@@ -394,12 +575,19 @@ class ChatroomWindows(QWidget):
         self.play_file_worker = {} # Diccionario para almacenar los workers de reproducción de archivos, key: nombre del archivo, value: worker
         self.file_sender_worker = {} # Diccionario para almacenar los workers de envio de archivos, key: nombre del archivo mas el nickname del destinatario, value: worker
 
+        self.group_chat = None # Ventana de chat grupal
+
         self.setWindowTitle(f"Chatroom de {self.sender_nickname}")
         self.setGeometry(100, 100, 300, 300)
         self.main_layout = QVBoxLayout()
 
         self.list_users = QListWidget()
         self.list_users.setLayout(QVBoxLayout())
+
+        # Mi foto de perfil
+        self.my_photo_widget = ProfilePictureWidget()
+        self.my_photo_widget.photo_updated.connect(self.send_my_photo_profile_to_users)
+        self.main_layout.addWidget(self.my_photo_widget)
 
         text_title = QLabel("Usuarios conectados")
         text_title.setFont(QFont("Arial", 18, QFont.Bold))
@@ -440,6 +628,13 @@ class ChatroomWindows(QWidget):
         logger.debug("Mensaje grupal recibido de %s: %s", sender_nickname, mensaje)
         self.chat_display.append(f"{sender_nickname}: {mensaje}")
 
+    def update_photo_of_user(self, sender_nickname: str, photo_bytes: bytes):
+        """Actualiza la foto de perfil de un usuario."""
+        if sender_nickname in self.profile_pictures: # si tenemos un chat abierto con esa persona
+            user_info = USER_INFO_BY_NICKNAME[sender_nickname]
+            user_info.profile_picture = photo_bytes
+            self.profile_pictures[sender_nickname].set_image_from_bytes(photo_bytes)
+
     def update_private_chat(self, mensaje):
         """ Este se llama desde self.messageReceived.emit(mensaje) en CheckPrivateIncomingMessagesWorker """
         # Aquí actualizamos la interfaz de forma segura en el hilo principal
@@ -448,7 +643,7 @@ class ChatroomWindows(QWidget):
         
         sender_nickname = mensaje.split(":")[0]
         check_action = mensaje.split(":")[1]
-        if check_action == "FILE":
+        if check_action == "FILE": # Actualizar la interfaz para decir que se está recibiendo un archivo
             sender_nickname, _, file_name, file_size = mensaje.split(":")
             file_size = int(file_size)
             if sender_nickname in self.text_box:
@@ -534,8 +729,14 @@ class ChatroomWindows(QWidget):
             logger.error(f"Error al crear archivo temporal: {e}")
             raise
 
-    def update_private_chat_files(self, sender_nickname, file_name, temp_file_path, percentage=0):
+    def update_private_chat_files(self, sender_nickname, file_name, temp_file_path, is_profile_picture, percentage=0):
         """ Este se llama desde self.fragmentReceived.emit en CheckPrivateIncomingFilesWorker """
+
+        if is_profile_picture:
+            if sender_nickname in self.profile_pictures:
+                self.profile_pictures[sender_nickname] = ImageViewerWidget()
+
+
         if sender_nickname not in self.save_button:
             self.save_button[sender_nickname] = {}
 
@@ -645,6 +846,8 @@ class ChatroomWindows(QWidget):
             self.check_workers[recipient_nickname + "files"].moveToThread(self.check_threads[recipient_nickname + "files"])
             self.check_workers[recipient_nickname + "files"].fragmentReceived.connect(self.update_private_chat_files)
             self.check_workers[recipient_nickname + "files"].createTemporaryFile.connect(self.create_temporary_file)
+            self.check_workers[recipient_nickname + "files"].createProfilePicture.connect(self.create_profile_picture)
+            self.check_workers[recipient_nickname + "files"].updateProfilePicture.connect(self.update_profile_picture)
             self.check_threads[recipient_nickname + "files"].started.connect(self.check_workers[recipient_nickname + "files"].process_files)
             self.check_threads[recipient_nickname + "files"].start()
 
@@ -716,6 +919,8 @@ class ChatroomWindows(QWidget):
             self.check_workers[recipient_nickname + "files"].moveToThread(self.check_threads[recipient_nickname + "files"])
             self.check_workers[recipient_nickname + "files"].fragmentReceived.connect(self.update_private_chat_files)
             self.check_workers[recipient_nickname + "files"].createTemporaryFile.connect(self.create_temporary_file)
+            self.check_workers[recipient_nickname + "files"].createProfilePicture.connect(self.create_profile_picture)
+            self.check_workers[recipient_nickname + "files"].updateProfilePicture.connect(self.update_profile_picture)
             self.check_threads[recipient_nickname + "files"].started.connect(self.check_workers[recipient_nickname + "files"].process_files)
             self.check_threads[recipient_nickname + "files"].start()
 
@@ -822,7 +1027,11 @@ class ChatroomWindows(QWidget):
 
     def on_file_sent(self):
         """Maneja la finalización del envío."""
-        logger.info("Archivo enviado correctamente.")
+        #if self.worker_thread:
+        #    self.worker_thread.quit()  # Solicitar la finalización del hilo
+        #    self.worker_thread.wait()  # Esperar a que el hilo termine
+        #    self.worker_thread = None  # Liberar la referencia
+        logger.info("Archivo enviado correctamente. Hilo terminado y limpiado.")
         # Aquí puedes mostrar un mensaje en la interfaz de usuario
 
     def show_error(self, error_message):
@@ -853,6 +1062,11 @@ class ChatroomWindows(QWidget):
             # Frame para la barra de progreso al recibir un archivo
             frame_archivo_recibido = QWidget()
             frame_archivo_recibido.setLayout(QHBoxLayout())
+
+            # Foto de perfil del otro usuario
+            self.profile_pictures[recipient_nickname] = ImageViewerWidget()
+            #image_profile_widget.set_image_from_bytes(user_info.profile_pic) # mandar los bytes de la fotos del otro usuario
+            self.layout[recipient_nickname].addWidget(self.profile_pictures[recipient_nickname])
 
             # Barra de progreso de recibido
             self.progress_bar_received[recipient_nickname] = ProgressBarWithLabel("Ningun archivo recibido por ahora")
@@ -1014,6 +1228,27 @@ class ChatroomWindows(QWidget):
         message = f"{action}:{sender}"
         self.send_message_orchestrator(message)
 
+    def create_profile_picture(self, sender_nickname, file_name, temp_file_path):
+        self.profile_pictures[sender_nickname].save_picture_path(temp_file_path)
+
+    def update_profile_picture(self, sender_nickname, picture_path):
+        self.profile_pictures[sender_nickname].set_image_from_path(picture_path)
+
+    def send_my_photo_profile_to_users(self):
+        profile_picture_worker = ProfilePictureSenderWorker(
+            file_path=self.my_photo_widget.get_picture_path(),
+            sender_nickname=self.sender_nickname, # el sender soy yo
+        )
+        profile_picture_worker.run()
+        #profile_picture_worker.finished.connect(self.on_file_sent)
+        #profile_picture_worker.error.connect(self.show_error)
+        #logger.debug("Iniciar el hilo para mandar mi foto de perfil")
+        #profile_picture_worker.start()
+
+
+
+
+
     def send_message_orchestrator(self, message):
         logger.info("Enviando mensaje: %s", message)
         WORKER_ORCHESTRATOR.send(message)
@@ -1052,6 +1287,8 @@ class CheckPrivateIncomingMessagesWorker(QObject):
 
 class CheckPrivateIncomingFilesWorker(QObject):
     createTemporaryFile = pyqtSignal(str, str, str)
+    createProfilePicture = pyqtSignal(str, str, str)
+    updateProfilePicture = pyqtSignal(str, str)
     fragmentReceived = pyqtSignal(str, str, str, int)
 
     def __init__(self, server: ServerTCP, sender_nickname):
@@ -1068,6 +1305,7 @@ class CheckPrivateIncomingFilesWorker(QObject):
         sender_nickname = ""
         file_name = ""
         temp_file_path = ""
+        is_profile_picture = False
 
         # TODO: esto ya no es necesario, borrarlo luego
         logger.debug("Intentando obtener el cliente de %s", self.sender_nickname)
@@ -1090,9 +1328,17 @@ class CheckPrivateIncomingFilesWorker(QObject):
                     self.fragmentReceived.emit(self.sender_nickname, file_name, temp_file_path, 100) # TODO esto hace que se mande dos veces el mismo mensaje
                     continue
 
+                if b":FIN_DEL_PROFILE_PICTURE:" in mensaje:
+                    logger.debug("Fin de envio de la foto de perfil de %s...", self.sender_nickname)
+                    is_profile_picture = False
+                    time.sleep(1)
+                    self.updateProfilePicture.emit(self.sender_nickname, temp_file_path)
+                    continue
+
+                logger.debug("SI que llegó ALGO")
                 try:
                     decoded_data = mensaje.decode('utf-8')
-                    logger.debug("Datos recibidos en process_files: %s", decoded_data)
+                    logger.debug("*** Datos recibidos en process_files: %s", decoded_data)
 
                     # Verificar si es el marcador de información del archivo
                     if decoded_data.startswith("INICIO_DEL_ARCHIVO:"):
@@ -1124,6 +1370,36 @@ class CheckPrivateIncomingFilesWorker(QObject):
                             last_execution_time = time.time()
 
 
+                    # Verificar si es el marcador de información del archivo
+                    if decoded_data.startswith("INICIO_DEL_PROFILE_PICTURE:"):
+                        is_profile_picture = True
+                        parts = decoded_data.split(":")
+                        if len(parts) >= 4:
+                            received_size = 0
+                            file_name = parts[1]  # Nombre del archivo
+                            file_size = int(parts[2])  # Tamaño del archivo
+                            sender_nickname = parts[3]  # Nickname del remitente
+                            logger.debug("*** Voy a recibir la foto de perfil de %s", sender_nickname)
+
+                            # Crear un archivo temporal
+                            temp_file = tempfile.NamedTemporaryFile(delete=False, mode='wb') # No se borrará el archivo al cerrarlo
+                            temp_file_path = temp_file.name
+                            temp_file.close()  # Cerrar el archivo para que pueda ser escrito más tarde
+
+                            # Dar permisos de lectura y escritura y evitar
+                            # el error en Windows:
+                            # Permission denied: 'C:\\Users\\Ahome\\AppData\\Local\\Temp\\tmpa05loims
+                            os.chmod(temp_file_path, stat.S_IREAD | stat.S_IWRITE)
+
+                            self.createProfilePicture.emit(sender_nickname, file_name, temp_file_path)  # Guardar path de la foto de perfil
+
+                            # El temp_file_path es la ruta del archivo temporal
+                            logger.debug("Temporary file path: %s", temp_file_path)
+                            # Abrir el archivo para escritura
+                            logger.debug("Datos recibidos\nNombre: %s\nTamaño: %s\nRemitente: %s", file_name, file_size, self.sender_nickname)
+                            last_execution_time = time.time()
+
+
                 except UnicodeDecodeError: # Si no se puede decodificar (entra en esta excepción), es un chunk binario
                     # Escribir el fragmento en el archivo temporal
                     with open(temp_file_path, 'ab') as temp_file:  # 'ab' para agregar en modo binario
@@ -1138,6 +1414,10 @@ class CheckPrivateIncomingFilesWorker(QObject):
 
                     # Obtener el tiempo actual
                     current_time = time.time()
+
+                    if is_profile_picture:
+                        logger.debug("Fragmento recibido %s/%s bytes (%s%%)", received_size, file_size, percentage)
+
 
                     # Verificar si han pasado 30 segundos desde la última ejecución
                     if current_time - last_execution_time >= 40:
@@ -1154,9 +1434,10 @@ class CheckPrivateIncomingFilesWorker(QObject):
                     else:
                         module = 2
 
-                    if percentage % module == 0:
+                    if percentage % module == 0 and not is_profile_picture:
                         # esto llama a update_private_chat_files
-                        self.fragmentReceived.emit(sender_nickname, file_name, temp_file_path, percentage)
+                        self.fragmentReceived.emit(sender_nickname, file_name, temp_file_path, is_profile_picture, percentage)
+                            
             except queue.Empty:
                 continue
             except Exception as e:
@@ -1259,6 +1540,7 @@ class MainWindow(QMainWindow):
 class UserInfo:
     def __init__(self, nickname: str):
         self.nickname = nickname
+        self.profile_pic = None # bytes de la foto de perfil
         self.server_listening = None # servidor tcp para recibir mensajes de este usuario
         self.server_listening_files = None # servidor tcp para recibir archivos de este usuario
         self.client = None # cliente tcp para enviar mensajes a este usuario
@@ -1390,10 +1672,15 @@ def handle_incoming_message(arguments, is_master):
             USER_INFO_BY_NICKNAME[sender_nickname] = UserInfo(sender_nickname)
             MY_CHATROOM.update_user_list()
             MY_CHATROOM.send_my_info_to_new_user()
+            #MY_CHATROOM.send_my_photo_profile_to_user()
     elif action == "UPDATE_USER_LIST":
         if sender_nickname != MY_NICKNAME and sender_nickname not in USER_INFO_BY_NICKNAME:
             USER_INFO_BY_NICKNAME[sender_nickname] = UserInfo(sender_nickname)
             MY_CHATROOM.update_user_list()
+    elif action == "UPDATE_MY_PHOTO": # se recibe la foto de perfil de un usuario para actualizarla
+        photo_bytes = arguments[2]
+        if sender_nickname != MY_NICKNAME and sender_nickname in USER_INFO_BY_NICKNAME:
+            MY_CHATROOM.update_photo_of_user(sender_nickname, photo_bytes)
     elif action == "SEND_GROUP_MESSAGE":
         message = arguments[2]
         if sender_nickname != MY_NICKNAME:
