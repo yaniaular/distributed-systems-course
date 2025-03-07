@@ -27,7 +27,7 @@ MAPPER_ADDR_TO_NICKNAME = {}
 
 AVAILABLE_PORTS_MASTER = [30000, 30001, 30002, 30003, 30004, 30005, 30006, 30007, 30008, 30009]
 AVAILABLE_PORTS_SLAVE_1 = [40000, 40001, 40002, 40003, 40004, 40005, 40006, 40007, 40008, 40009]
-AVAILABLE_PORTS_SLAVE_2 = [50000, 50001, 50002, 50003, 50005, 50005, 50006, 50007, 50008, 50009]
+AVAILABLE_PORTS_SLAVE_2 = [49152, 49153, 49154, 49155, 49156, 49157, 49158, 49159, 49160]
 
 IS_MASTER = False
 SLAVE_NUMBER = None
@@ -93,11 +93,9 @@ def get_free_port():
         port = AVAILABLE_PORTS_SLAVE_1.pop(0)
         logger.info("Tomando un puerto para el nodo slave 1: %s", port)
         return port
-    elif SLAVE_NUMBER == "slave2":
-        port = AVAILABLE_PORTS_SLAVE_2.pop(0)
-        logger.info("Tomando un puerto para el nodo slave 2: %s", port)
-        return port
-    return None
+    port = AVAILABLE_PORTS_SLAVE_2.pop(0)
+    logger.info("Tomando un puerto para el nodo slave 2: %s", port)
+    return port
 
 THREAD_ORCHESTRATOR = None
 WORKER_ORCHESTRATOR = None
@@ -729,14 +727,8 @@ class ChatroomWindows(QWidget):
             logger.error(f"Error al crear archivo temporal: {e}")
             raise
 
-    def update_private_chat_files(self, sender_nickname, file_name, temp_file_path, is_profile_picture, percentage=0):
+    def update_private_chat_files(self, sender_nickname, file_name, temp_file_path, percentage=0):
         """ Este se llama desde self.fragmentReceived.emit en CheckPrivateIncomingFilesWorker """
-
-        if is_profile_picture:
-            if sender_nickname in self.profile_pictures:
-                self.profile_pictures[sender_nickname] = ImageViewerWidget()
-
-
         if sender_nickname not in self.save_button:
             self.save_button[sender_nickname] = {}
 
@@ -1296,7 +1288,6 @@ class CheckPrivateIncomingFilesWorker(QObject):
         self.server = server
         self.sender_nickname = sender_nickname # nickname del usuario que envía el archivo
         self.running = True
-        self.client_files: ClientTCP = None # TODO: esto ya no es necesario, borrarlo luego
         logger.info("CheckPrivateIncomingFilesWorker creado para %s", sender_nickname)
 
     def process_files(self):
@@ -1306,16 +1297,6 @@ class CheckPrivateIncomingFilesWorker(QObject):
         file_name = ""
         temp_file_path = ""
         is_profile_picture = False
-
-        # TODO: esto ya no es necesario, borrarlo luego
-        logger.debug("Intentando obtener el cliente de %s", self.sender_nickname)
-        get_client = True
-        while get_client:
-            if self.client_files is None:
-                self.client_files = USER_INFO_BY_NICKNAME[self.sender_nickname].client_files
-                if self.client_files is not None:
-                    logger.debug("CLIENTE DE ARCHIVOS DE %s OBTENIDO!!!", self.sender_nickname)
-                    get_client = False
 
         # Variable para almacenar el tiempo de la última ejecución
         last_execution_time = time.time()
@@ -1436,7 +1417,7 @@ class CheckPrivateIncomingFilesWorker(QObject):
 
                     if percentage % module == 0 and not is_profile_picture:
                         # esto llama a update_private_chat_files
-                        self.fragmentReceived.emit(sender_nickname, file_name, temp_file_path, is_profile_picture, percentage)
+                        self.fragmentReceived.emit(sender_nickname, file_name, temp_file_path, percentage)
                             
             except queue.Empty:
                 continue
@@ -1697,12 +1678,12 @@ def handle_incoming_message(arguments, is_master):
             sender_ip = arguments[3]
             sender_port = int(arguments[4])
             user_info = USER_INFO_BY_NICKNAME.get(sender_nickname)
-            logger.debug("Ok, crear cliente para enviar ACK/archivos a %s", sender_nickname)
+            logger.debug("\n\n!! **** Ok, crear cliente para enviar ACK/archivos a %s, ip: %s, port: %s", sender_nickname, sender_ip, str(sender_port))
             if not user_info:
                 USER_INFO_BY_NICKNAME[sender_nickname] = UserInfo(sender_nickname)
                 user_info = USER_INFO_BY_NICKNAME[sender_nickname]
             if user_info.client_files is None:
-                logger.debug("Intentando crear cliente para enviar files a %s - %s: %s", sender_nickname, sender_ip, sender_port)
+                logger.debug("\n\n!! **** Intentando crear cliente para enviar files a %s - %s: %s", sender_nickname, sender_ip, sender_port)
                 client_socket_files = ClientTCP(f"client_of_{recipient_nickname}_to_send_files_to_{sender_nickname}", sender_ip, sender_port)
                 user_info.client_files = client_socket_files
 
