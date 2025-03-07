@@ -24,8 +24,11 @@ USER_INFO_BY_NICKNAME = {} # información de los usuarios conectados
 MAPPER_ADDR_TO_NICKNAME = {}
 
 AVAILABLE_PORTS_MASTER = [30000, 30001, 30002, 30003, 30004, 30005, 30006, 30007, 30008, 30009]
-AVAILABLE_PORTS_SLAVE = [40000, 40001, 40002, 40003, 40004, 40005, 40006, 40007, 40008, 40009]
+AVAILABLE_PORTS_SLAVE_1 = [40000, 40001, 40002, 40003, 40004, 40005, 40006, 40007, 40008, 40009]
+AVAILABLE_PORTS_SLAVE_2 = [50000, 50001, 50002, 50003, 50005, 50005, 50006, 50007, 50008, 50009]
+
 IS_MASTER = False
+SLAVE_NUMBER = None
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -35,7 +38,7 @@ logging.basicConfig(
 
 logger = logging.getLogger("App principal")
 
-usuarios = {"yani": 12345, "paco": 12345}
+usuarios = {"yani": 12345, "paco": 12345, "blue": 12345}
 
 def caesar_encrypt(message: str, shift: int) -> str:
     result = ""
@@ -84,9 +87,15 @@ def get_free_port():
         port = AVAILABLE_PORTS_MASTER.pop(0)
         logger.info("Tomando un puerto para el nodo maestro %s", port)
         return port
-    port = AVAILABLE_PORTS_SLAVE.pop(0)
-    logger.info("Tomando un puerto para el nodo slave %s", port)
-    return port
+    if SLAVE_NUMBER == "slave1":
+        port = AVAILABLE_PORTS_SLAVE_1.pop(0)
+        logger.info("Tomando un puerto para el nodo slave 1: %s", port)
+        return port
+    elif SLAVE_NUMBER == "slave2":
+        port = AVAILABLE_PORTS_SLAVE_2.pop(0)
+        logger.info("Tomando un puerto para el nodo slave 2: %s", port)
+        return port
+    return None
 
 THREAD_ORCHESTRATOR = None
 WORKER_ORCHESTRATOR = None
@@ -423,7 +432,7 @@ class ChatroomWindows(QWidget):
         # Aquí actualizamos la interfaz de forma segura en el hilo principal
         # Asegúrate de usar la clave correcta, por ejemplo, el nickname del destinatario
         logger.debug("Mensaje grupal recibido de %s: %s", sender_nickname, mensaje)
-        #self.chat_display.append(f"{sender_nickname}: {mensaje}")
+        self.chat_display.append(f"{sender_nickname}: {mensaje}")
 
     def update_private_chat(self, mensaje):
         """ Este se llama desde self.messageReceived.emit(mensaje) en CheckPrivateIncomingMessagesWorker """
@@ -729,6 +738,8 @@ class ChatroomWindows(QWidget):
 
         # Cuadro de texto para escribir mensajes
         self.chat_input = QLineEdit()
+        self.chat_input.textChanged.connect(lambda: self.replace_emoticons(recipient_nickname))
+        self.chat_input.returnPressed.connect(self.send_message_to_group)
         self.chat_input.setPlaceholderText("Escribe tu mensaje aquí...")
         self.group_layout.addWidget(self.chat_input)
 
@@ -871,6 +882,8 @@ class ChatroomWindows(QWidget):
             frame_entrada.setLayout(QHBoxLayout())
 
             self.entry_message[recipient_nickname] = QLineEdit(frame_entrada)
+            self.entry_message[recipient_nickname].textChanged.connect(lambda: self.replace_emoticons(recipient_nickname))
+            self.entry_message[recipient_nickname].returnPressed.connect(lambda: self.send_private_message(recipient_nickname))
             self.entry_message[recipient_nickname].setFont(self.get_font(12))
             frame_entrada.layout().addWidget(self.entry_message[recipient_nickname])
 
@@ -888,6 +901,23 @@ class ChatroomWindows(QWidget):
 
             self.chat_windows[recipient_nickname].show()
             logger.debug("Chat con %s creado.", recipient_nickname)
+
+    def replace_emoticons(self, recipient_nickname: str):
+        emoticon_map = {
+            ':)': '😊',
+            ':D': '😄',
+            ';)': '😉'
+        }
+
+        text = self.entry_message[recipient_nickname].text()
+        for emoticon, emoji in emoticon_map.items():
+            if emoticon in text:
+                text = text.replace(emoticon, emoji)
+
+        # Desconectar y reconectar para evitar recursión infinita
+        self.entry_message[recipient_nickname].blockSignals(True)
+        self.entry_message[recipient_nickname].setText(text)
+        self.entry_message[recipient_nickname].blockSignals(False)
 
     def send_private_message(self, recipient_nickname: str):
         """ Envía un mensaje y lo muestra en el área de mensajes. """
@@ -1245,7 +1275,7 @@ class IncomingMessageOrchestrator(QObject):
         super().__init__()
         self.port = port
         self.group = ip_multicast
-        self.ttl = 10
+        self.ttl = 10 # esto es para que los mensajes no se queden en la red
         self.create_socket()
         self.is_master = is_master
         self.running = True
@@ -1364,7 +1394,10 @@ def handle_incoming_message(arguments, is_master):
             MY_CHATROOM.update_user_list()
     elif action == "SEND_GROUP_MESSAGE":
         message = arguments[2]
-        MY_CHATROOM.update_group_chat(sender_nickname, message)
+        if sender_nickname != MY_NICKNAME:
+            MY_CHATROOM.update_group_chat(sender_nickname, message)
+        else:
+            MY_CHATROOM.update_group_chat("Tú", message)
     elif action == "CREATE_TCP_SERVER_FILES":
         # creo que no es necesario hacer nada aquí
         # tendria que separa la logica de open_chat_in_recipient_side
@@ -1393,16 +1426,18 @@ def main():
     os.environ['VLC_PLUGIN_PATH'] = '/Applications/VLC.app/Contents/MacOS/plugins'
     os.environ['VLC_LIB_PATH'] = '/Applications/VLC.app/Contents/MacOS/lib'
 
-    global MY_MULTICAST_PORT, WORKER_ORCHESTRATOR, THREAD_ORCHESTRATOR, MY_CHATROOM, IS_MASTER
+    global MY_MULTICAST_PORT, WORKER_ORCHESTRATOR, THREAD_ORCHESTRATOR, MY_CHATROOM, IS_MASTER, SLAVE_NUMBER
     # Conectarse a un servidor multicast para comunicación interna o técnica entre nodos.
     # Esto actuará como orquestador de mensajes entre los nodos.
     ip_multicast = "224.0.0.0"
     is_master = True if len(sys.argv) > 1 and sys.argv[1] == "master" else False
     IS_MASTER = is_master
+    SLAVE_NUMBER = sys.argv[1]
     MY_MULTICAST_PORT = int(sys.argv[2]) if len(sys.argv) >= 2 else 30000
 
     logger.debug("ip_multicast %s", ip_multicast)
     logger.debug("is_master %s", is_master)
+    logger.debug("slave number %s", SLAVE_NUMBER)
     logger.debug("MY_MULTICAST_PORT %s", MY_MULTICAST_PORT)
 
     WORKER_ORCHESTRATOR = IncomingMessageOrchestrator(is_master, ip_multicast, MY_MULTICAST_PORT)
