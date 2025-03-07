@@ -132,6 +132,8 @@ def terminate_application():
         WORKER_ORCHESTRATOR.stop()
     if THREAD_ORCHESTRATOR.isRunning():
         THREAD_ORCHESTRATOR.quit()
+    if MY_CHATROOM.group_chat:
+        MY_CHATROOM.group_chat.close()
     sys.exit(0)
 
 def singal_handler_terminate(signum, frame):
@@ -414,10 +416,14 @@ class ChatroomWindows(QWidget):
         placeholder_item.setFont(QFont("Arial", 10, QFont.StyleItalic))
         self.list_users.addItem(placeholder_item) # Agregar el placeholder al QListWidget
 
+        self.btn_cerrar = QPushButton("Cerrar sesión", self)
+        self.btn_cerrar.clicked.connect(terminate_application)
+
         # Add widgets to the layout
         self.main_layout.addWidget(text_title)
         self.main_layout.addWidget(self.btn_create_group)
         self.main_layout.addWidget(self.list_users)
+        self.main_layout.addWidget(self.btn_cerrar)
 
         # Establecer el layout principal en la ventana
         self.setLayout(self.main_layout)
@@ -738,7 +744,7 @@ class ChatroomWindows(QWidget):
 
         # Cuadro de texto para escribir mensajes
         self.chat_input = QLineEdit()
-        self.chat_input.textChanged.connect(lambda: self.replace_emoticons(recipient_nickname))
+        self.chat_input.textChanged.connect(lambda: self.replace_emoticons(self.chat_input))
         self.chat_input.returnPressed.connect(self.send_message_to_group)
         self.chat_input.setPlaceholderText("Escribe tu mensaje aquí...")
         self.group_layout.addWidget(self.chat_input)
@@ -882,7 +888,7 @@ class ChatroomWindows(QWidget):
             frame_entrada.setLayout(QHBoxLayout())
 
             self.entry_message[recipient_nickname] = QLineEdit(frame_entrada)
-            self.entry_message[recipient_nickname].textChanged.connect(lambda: self.replace_emoticons(recipient_nickname))
+            self.entry_message[recipient_nickname].textChanged.connect(lambda: self.replace_emoticons(self.entry_message[recipient_nickname]))
             self.entry_message[recipient_nickname].returnPressed.connect(lambda: self.send_private_message(recipient_nickname))
             self.entry_message[recipient_nickname].setFont(self.get_font(12))
             frame_entrada.layout().addWidget(self.entry_message[recipient_nickname])
@@ -902,22 +908,22 @@ class ChatroomWindows(QWidget):
             self.chat_windows[recipient_nickname].show()
             logger.debug("Chat con %s creado.", recipient_nickname)
 
-    def replace_emoticons(self, recipient_nickname: str):
+    def replace_emoticons(self, entry: QLineEdit):
         emoticon_map = {
             ':)': '😊',
             ':D': '😄',
             ';)': '😉'
         }
 
-        text = self.entry_message[recipient_nickname].text()
+        text = entry.text()
         for emoticon, emoji in emoticon_map.items():
             if emoticon in text:
                 text = text.replace(emoticon, emoji)
 
         # Desconectar y reconectar para evitar recursión infinita
-        self.entry_message[recipient_nickname].blockSignals(True)
-        self.entry_message[recipient_nickname].setText(text)
-        self.entry_message[recipient_nickname].blockSignals(False)
+        entry.blockSignals(True)
+        entry.setText(text)
+        entry.blockSignals(False)
 
     def send_private_message(self, recipient_nickname: str):
         """ Envía un mensaje y lo muestra en el área de mensajes. """
@@ -1163,6 +1169,8 @@ class CheckPrivateIncomingFilesWorker(QObject):
 
 class NicknameWindow(QMainWindow):
     """ Ventana secundaria para ingresar el nickname. """
+    user_connected = pyqtSignal()
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Ingresar Nickname")
@@ -1218,6 +1226,7 @@ class NicknameWindow(QMainWindow):
         MY_CHATROOM = self.chatroom_windows
         logger.debug("Chatroom creado para %s - %s", nickname, MY_CHATROOM)
         MY_NICKNAME = nickname
+        self.user_connected.emit()
         self.close()
 
 
@@ -1227,32 +1236,25 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Ventana Principal")
         self.setGeometry(100, 100, 300, 200)
 
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-        layout = QVBoxLayout(central_widget)
+        self.central_widget = QWidget()
+        self.setCentralWidget(self.central_widget)
+        layout = QVBoxLayout(self.central_widget)
 
         self.btn_nickname = QPushButton("Iniciar sesión", self)
         self.nickname_window = NicknameWindow()
         self.btn_nickname.clicked.connect(self.ask_nickname_window)
+        self.nickname_window.user_connected.connect(self.close_this_window)
         layout.addWidget(self.btn_nickname)
 
-        self.btn_cerrar = QPushButton("Cerrar todas las sesiones", self)
-        self.btn_cerrar.clicked.connect(terminate_application)
-
-        layout.addWidget(self.btn_cerrar)
-
-        self.btn_list_users = QPushButton("Debug", self)
-        self.btn_list_users.clicked.connect(self.list_users)
+        self.btn_list_users = QPushButton("Cerrar aplicación", self)
+        self.btn_list_users.clicked.connect(terminate_application)
         layout.addWidget(self.btn_list_users)
+
+    def close_this_window(self):
+        self.hide()
 
     def ask_nickname_window(self):
         self.nickname_window.show()
-
-    def list_users(self):
-        for nickname, user_info in USER_INFO_BY_NICKNAME.items():
-            print(nickname, user_info)
-        for nickname, user_info in USER_INFO_BY_NICKNAME.items():
-            print(nickname, user_info.chatroom_window)
 
 class UserInfo:
     def __init__(self, nickname: str):
